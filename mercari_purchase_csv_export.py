@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--to-date",
-        default=parser.parse_args().from_date,
+        default=default_from,
         help="出力対象To日付 (yyyy/mm/dd)",
     )
     parser.add_argument(
