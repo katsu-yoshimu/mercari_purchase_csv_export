@@ -11,7 +11,7 @@
 * Selenium によるブラウザ操作（手動ログイン対応）
 * 購入履歴を日付範囲で抽出
 * 降順前提で高速終了（From 日付を下回った時点で処理終了）
-* CSV 出力（Excel 互換、ダブルクォート・カンマ安全）
+* CSV 出力（Excel 互換、ダブルクォート・カンマ安全、文字コード：UTF-8、BOM付）
 * 取引詳細ページ **2パターン対応**
 * PEP8 準拠
 
@@ -51,11 +51,10 @@ pip install selenium
 
 ## 実行方法
 
+mercari_purchase_csv_export.py をダウンロードしたのちに、以下を実行してください。
+
 ```powershell
-python mercari_purchase_csv_export.py \
-  --from-date 2026/01/16 \
-  --to-date 2026/01/17 \
-  --csv-path 購入履歴.csv
+python mercari_purchase_csv_export.py --from-date 2026/01/16 --to-date 2026/01/17 --csv-path 購入履歴.csv
 ```
 
 ### 引数一覧
@@ -63,7 +62,7 @@ python mercari_purchase_csv_export.py \
 | 引数            | 内容                       | 省略時        |
 | ------------- | ------------------------ | ---------- |
 | `--from-date` | 出力対象 From 日付（yyyy/mm/dd） | 本日   |
-| `--to-date`   | 出力対象 To 日付（yyyy/mm/dd）   | From 日付   |
+| `--to-date`   | 出力対象 To 日付（yyyy/mm/dd）   | 本日   |
 | `--csv-path`  | 出力 CSV ファイルパス            | `購入履歴.csv` |
 
 ---
