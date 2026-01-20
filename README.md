@@ -1,4 +1,5 @@
 # mercari_purchase_csv_export
+
 メルカリ購入履歴 CSV エクスポート
 
 メルカリの購入履歴ページおよび取引詳細ページを Selenium で解析し、
@@ -54,16 +55,36 @@ pip install selenium
 mercari_purchase_csv_export.py をダウンロードしたのちに、以下を実行してください。
 
 ```powershell
-python mercari_purchase_csv_export.py --from-date 2026/01/16 --to-date 2026/01/17 --csv-path 購入履歴.csv
+python mercari_purchase_csv_export.py --from-date 2026/01/16 --to-date 2026/01/17 --csv-path 購入履歴_20260116_20260117.csv
 ```
 
 ### 引数一覧
 
 | 引数            | 内容                       | 省略時        |
 | ------------- | ------------------------ | ---------- |
-| `--from-date` | 出力対象 From 日付（yyyy/mm/dd） | 本日   |
-| `--to-date`   | 出力対象 To 日付（yyyy/mm/dd）   | 本日   |
-| `--csv-path`  | 出力 CSV ファイルパス            | `購入履歴.csv` |
+| `--from-date` | 出力対象 From 日付（yyyy/mm/dd） | 昨日   |
+| `--to-date`   | 出力対象 To 日付（yyyy/mm/dd）   | From 日付   |
+| `--csv-path`  | 出力 CSV ファイルパス            | `output/購入履歴_{From日付:yyyymmdd}_{To日付:yyyymmdd}.csv` |
+| `--ignore-timeout`  | 詳細ページの表示待ちタイムアウト時に例外を送出せず処理を継続する | 例外発生時に処理を継続しない |
+
+## ディレクトリ構成
+
+```
+mercari_purchase_csv_export/
+├─ mercari_purchase_csv_export.py                    # メルカリ購入履歴をCSV出力するスクリプト
+├─ README.md                                         # 本ツールの説明・使い方
+├─ logs/                                             # ログおよびデバッグ用スナップショット出力先
+│  ├─ mercari_purchase_csv_export_YYYYMMDD.log         # 実行ログ（日付ごとに作成）
+│  ├─ timeout_purchase_list_YYYYMMDD_HHMMSS.png        # 購入履歴ページ表示タイムアウト時スクリーンショット
+│  ├─ timeout_purchase_list_YYYYMMDD_HHMMSS.html       # 購入履歴ページ表示タイムアウト時HTML
+│  ├─ timeout_detail_price_YYYYMMDD_HHMMSS.png         # 詳細ページ表示（金額）タイムアウト時スクリーンショット
+│  ├─ timeout_detail_price_YYYYMMDD_HHMMSS.html        # 詳細ページ表示（金額）タイムアウト時HTML
+│  ├─ timeout_detail_id_or_order_YYYYMMDD_HHMMSS.png   # 詳細ページ表示（商品ID／注文番号）タイムアウト時スクリーンショット
+│  └─ timeout_detail_id_or_order_YYYYMMDD_HHMMSS.html  # 詳細ページ表示（商品ID／注文番号）タイムアウト時HTML
+├─ output/                                           # CSV出力先（任意・引数指定可）
+│  └─ 購入履歴_YYYYMMDD_YYYYMMDD.csv                    # 購入履歴CSV（from-date_to-date）
+└─ requirements.txt                                  # 依存ライブラリ（selenium など）
+```
 
 ---
 
@@ -157,11 +178,11 @@ From 日付 <= 購入日時 <= To 日付
 ## 処理完了時の表示例
 
 ```
-処理が完了しました。
-検索条件 From : 2025/12/17
-検索条件 To   : 2026/01/16
-CSV出力先     : 購入履歴.csv
-出力件数      : 12 件
+メルカリ購入履歴CSV出力処理処理が完了しました。
+　検索条件 From : 2025/12/17
+　検索条件 To   : 2026/01/16
+　CSV出力先     : output\購入履歴_20251217_20260116.csv
+　出力件数      : 12 件
 ```
 
 ---
