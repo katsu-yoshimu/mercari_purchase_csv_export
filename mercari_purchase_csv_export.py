@@ -16,7 +16,13 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
-DATETIME_FORMAT = "%Y/%m/%d %H:%M"
+
+# =====================
+# グローバル設定
+# =====================
+logger = None
+DEBUG = False
+IGNORE_TIMEOUT = False
 LOGIN_URL = "https://jp.mercari.com/"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -25,81 +31,19 @@ USER_AGENT = (
 )
 INTERVAL_SEC = 3.0
 
-DEBUG = False
-logger = None
-IGNORE_TIMEOUT = False
 
-
-def setup_logger() -> logging.Logger:
-    """
-    ログ設定を行う。
-
-    Returns:
-        logging.Logger: 設定済みロガー
-    """
-    jst = timezone(timedelta(hours=9))
-    today = datetime.now(jst).strftime("%Y%m%d")
-
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
-
-    log_file = log_dir / f"mercari_purchase_csv_export_{today}.log"
-
-    logger_obj = logging.getLogger("mercari")
-    logger_obj.setLevel(logging.DEBUG)
-
-    formatter = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(message)s"
-    )
-
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setFormatter(formatter)
-
-    file_handler = logging.FileHandler(
-        log_file, encoding="utf-8"
-    )
-    file_handler.setFormatter(formatter)
-
-    if not logger_obj.handlers:
-        logger_obj.addHandler(stream_handler)
-        logger_obj.addHandler(file_handler)
-
-    return logger_obj
-
-
-def save_debug_snapshot(driver: webdriver.Chrome, prefix: str) -> None:
-    """
-    ブラウザのスクリーンショット（PNG）とHTMLを保存する。
-
-    Args:
-        driver (webdriver.Chrome): WebDriver
-        prefix (str): ファイル名プレフィックス
-    """
-    jst = timezone(timedelta(hours=9))
-    timestamp = datetime.now(jst).strftime("%Y%m%d_%H%M%S")
-
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
-
-    png_path = log_dir / f"{prefix}_{timestamp}.png"
-    html_path = log_dir / f"{prefix}_{timestamp}.html"
-
-    try:
-        driver.save_screenshot(str(png_path))
-        html_path.write_text(driver.page_source, encoding="utf-8")
-
-        logger.debug("スナップショット保存(PNG): %s", png_path)
-        logger.debug("スナップショット保存(HTML): %s", html_path)
-
-    except Exception:
-        logger.exception("スナップショット保存中にエラーが発生しました。")
-
-
+# =====================
+# 引数
+# =====================
 def parse_args() -> argparse.Namespace:
     """
+    関数名: parse_args
     コマンドライン引数を解析する。
 
-    Returns:
+    引数:
+        なし
+
+    戻り値:
         argparse.Namespace: パース済み引数
     """
     parser = argparse.ArgumentParser(
@@ -147,8 +91,64 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# =====================
+# Logger
+# =====================
+def setup_logger() -> logging.Logger:
+    """
+    関数名: parse_args
+    コマンドライン引数を解析する。
+
+    引数:
+        なし
+
+    戻り値:
+        argparse.Namespace: パース済み引数
+    """
+    jst = timezone(timedelta(hours=9))
+    today = datetime.now(jst).strftime("%Y%m%d")
+
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+
+    log_file = log_dir / f"mercari_purchase_csv_export_{today}.log"
+
+    logger_obj = logging.getLogger("mercari")
+    logger_obj.setLevel(logging.DEBUG)
+
+    formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s"
+    )
+
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
+
+    file_handler = logging.FileHandler(
+        log_file, encoding="utf-8"
+    )
+    file_handler.setFormatter(formatter)
+
+    if not logger_obj.handlers:
+        logger_obj.addHandler(stream_handler)
+        logger_obj.addHandler(file_handler)
+
+    return logger_obj
+
+
+# =====================
+# Selenium
+# =====================
 def setup_driver() -> webdriver.Chrome:
-    """Selenium WebDriverを初期化する"""
+    """
+    関数名: setup_driver
+    Selenium WebDriverを初期化する
+
+    引数:
+        なし
+
+    戻り値:
+        webdriver.Chrome: 初期化されたChromeドライバー
+    """
     options = Options()
     options.add_argument(f"--user-agent={USER_AGENT}")
     options.add_argument("--disable-blink-features=AutomationControlled")
@@ -158,11 +158,20 @@ def setup_driver() -> webdriver.Chrome:
 
 
 def wait_for_manual_login(driver: webdriver.Chrome) -> None:
-    """手動ログインを促して処理を中断する"""
+    """
+    関数名: wait_for_manual_login
+    手動ログインを促して処理を中断する
+
+    引数:
+        driver (webdriver.Chrome): WebDriverインスタンス
+
+    戻り値:
+        None
+    """
     login_url = LOGIN_URL
     # テスト用URL
     if DEBUG:
-        login_url = "file:///C:/work/02_%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA%E8%B3%BC%E5%85%A5%E5%B1%A5%E6%AD%B4CSV%E5%87%BA%E5%8A%9B/0109%E5%85%A5%E6%89%8B%E8%B3%87%E6%96%99/%E8%B3%BC%E5%85%A5%E3%81%97%E3%81%9F%E5%95%86%E5%93%81%20-%20%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA.mhtml"
+        login_url = "file:///C:/work/02_%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA%E8%B3%BC%E5%85%A5%E5%B1%A5%E6%AD%B4CSV%E5%87%BA%E5%8A%9B/0116%E5%85%A5%E6%89%8B%E8%B3%87%E6%96%99/%E8%B3%BC%E5%85%A5%E3%81%97%E3%81%9F%E5%95%86%E5%93%81%20-%20%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA.mhtml"
 
     driver.get(login_url)
     input(
@@ -172,12 +181,138 @@ def wait_for_manual_login(driver: webdriver.Chrome) -> None:
     )
 
 
+# =====================
+# Utility
+# =====================
+def save_debug_snapshot(driver: webdriver.Chrome, prefix: str) -> None:
+    """
+    関数名: save_debug_snapshot
+    ブラウザのスクリーンショット（PNG）とHTMLを保存する。
+
+    引数:
+        driver (webdriver.Chrome): WebDriverインスタンス
+        prefix (str): ファイル名プレフィックス
+
+    戻り値:
+        None
+    """
+    jst = timezone(timedelta(hours=9))
+    timestamp = datetime.now(jst).strftime("%Y%m%d_%H%M%S")
+
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+
+    png_path = log_dir / f"{prefix}_{timestamp}.png"
+    html_path = log_dir / f"{prefix}_{timestamp}.html"
+
+    try:
+        driver.save_screenshot(str(png_path))
+        html_path.write_text(driver.page_source, encoding="utf-8")
+
+        logger.debug("スナップショット保存(PNG): %s", png_path)
+        logger.debug("スナップショット保存(HTML): %s", html_path)
+
+    except Exception:
+        logger.exception("スナップショット保存中にエラーが発生しました。")
+
+
+def resolve_csv_path(
+    csv_path: str,
+    from_date: date,
+    to_date: date
+) -> Path:
+    """
+    関数名: resolve_csv_path
+    CSV出力パスを決定する。
+
+    引数:
+        csv_path (str): --csv-path で指定されたパス（None可）
+        from_date (date): From日付
+        to_date (date): To日付
+
+    戻り値:
+        Path: 解決されたCSV出力先フルパス
+    """
+    filename = (
+        f"購入履歴_{from_date.strftime('%Y%m%d')}_"
+        f"{to_date.strftime('%Y%m%d')}.csv"
+    )
+
+    output_dir = Path("output")
+    output_dir.mkdir(exist_ok=True)
+
+    # --csv-path 未指定
+    if not csv_path:
+        return output_dir / filename
+
+    path = Path(csv_path)
+
+    # 絶対パス指定
+    if path.is_absolute():
+        if path.is_dir():
+            return path / filename
+        return path
+
+    # 相対パス指定 → output ディレクトリ基準
+    resolved = output_dir / path
+    if resolved.is_dir():
+        return resolved / filename
+
+    return resolved
+
+
+def get_text_or_empty(
+    driver: webdriver.Chrome,
+    xpath: str,
+) -> str:
+    """
+    関数名: get_text_or_empty
+    XPATHに一致するすべての要素のテキストを連結して返す。
+    存在しない場合は空文字を返す。
+
+    引数:
+        driver (webdriver.Chrome): WebDriverインスタンス
+        xpath (str): 検索対象のXPath文字列
+
+    戻り値:
+        str: 連結されたテキストまたは空文字
+    """
+    try:
+        elements = driver.find_elements(By.XPATH, xpath)
+        texts: List[str] = [
+            element.text.strip()
+            for element in elements
+            if element.text and element.text.strip()
+        ]
+
+        return "".join(texts)
+
+    except WebDriverException:
+        return ""
+
+
+# =====================
+# Main logic
+# =====================
 def collect_purchase_items(
     driver: webdriver.Chrome,
     from_date: date,
     to_date: date,
 ) -> List[Dict[str, str]]:
-    """購入履歴から対象明細を抽出する"""
+    """
+    関数名: collect_purchase_items
+    購入履歴から対象明細を抽出する
+
+    引数:
+        driver (webdriver.Chrome): WebDriverインスタンス
+        from_date (date): 抽出開始日
+        to_date (date): 抽出終了日
+
+    戻り値:
+        List[Dict[str, str]]: 商品名、購入日時、詳細ページURLを含む辞書のリスト
+    """
+    DATETIME_FORMAT = "%Y/%m/%d %H:%M"
+
     results: List[Dict[str, str]] = []
 
     # --- 商品代金 要素の表示待ち（最大5秒） ---
@@ -239,8 +374,16 @@ def enrich_items_with_detail(
     items: List[Dict[str, str]],
 ) -> None:
     """
+    関数名: enrich_items_with_detail
     明細ごとに詳細ページを開き、
     金額・商品ID／注文番号を items に追記する（破壊的更新）
+
+    引数:
+        driver (webdriver.Chrome): WebDriverインスタンス
+        items (List[Dict[str, str]]): 更新対象の商品情報のリスト
+
+    戻り値:
+        None
     """
     total = len(items)
 
@@ -252,7 +395,7 @@ def enrich_items_with_detail(
         detail_url = item["detail_url"]
         # テスト用URL
         if DEBUG:
-            detail_url = "file:///C:/work/02_%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA%E8%B3%BC%E5%85%A5%E5%B1%A5%E6%AD%B4CSV%E5%87%BA%E5%8A%9B/0109%E5%85%A5%E6%89%8B%E8%B3%87%E6%96%99/%E5%8F%96%E5%BC%95%E7%94%BB%E9%9D%A2%20-%20%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA.mhtml"
+            detail_url = "file:///C:/work/02_%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA%E8%B3%BC%E5%85%A5%E5%B1%A5%E6%AD%B4CSV%E5%87%BA%E5%8A%9B/0116%E5%85%A5%E6%89%8B%E8%B3%87%E6%96%99/%E5%8F%96%E5%BC%95%E7%94%BB%E9%9D%A2%20-%20%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA.mhtml"
 
         detail = fetch_purchase_detail(driver, detail_url)
 
@@ -277,7 +420,17 @@ def enrich_items_with_detail(
 
 
 def write_csv(csv_path: str, items: List[Dict[str, str]]) -> None:
-    """CSVファイルを出力する"""
+    """
+    関数名: write_csv
+    CSVファイルを出力する
+
+    引数:
+        csv_path (str): 出力先パス
+        items (List[Dict[str, str]]): 出力データ（辞書のリスト）
+
+    戻り値:
+        None
+    """
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as file:
         writer = csv.writer(
             file,
@@ -306,45 +459,20 @@ def write_csv(csv_path: str, items: List[Dict[str, str]]) -> None:
             )
 
 
-def get_text_or_empty(
-    driver: webdriver.Chrome,
-    xpath: str,
-) -> str:
-    """
-    XPATHに一致するすべての要素のテキストを連結して返す。
-    存在しない場合は空文字を返す。
-    """
-    try:
-        elements = driver.find_elements(By.XPATH, xpath)
-        texts: List[str] = [
-            element.text.strip()
-            for element in elements
-            if element.text and element.text.strip()
-        ]
-
-        return "".join(texts)
-
-    except WebDriverException:
-        return ""
-
-
 def fetch_purchase_detail(
     driver: webdriver.Chrome,
     detail_url: str,
 ) -> Dict[str, str]:
     """
+    関数名: fetch_purchase_detail
     詳細URLを開き、金額・商品ID・注文番号を取得する
 
-    Args:
-        driver (webdriver.Chrome): WebDriver
+    引数:
+        driver (webdriver.Chrome): WebDriverインスタンス
         detail_url (str): 詳細ページURL
     
-    Returns:
-        {
-            "price": str,
-            "item_id": str,
-            "order_number": str,
-        }
+    戻り値:
+        Dict[str, str]: "price", "item_id", "order_number" をキーに持つ辞書
     """
     driver.get(detail_url)
     logger.debug(f"詳細URL: {detail_url}")
@@ -419,53 +547,135 @@ def fetch_purchase_detail(
     }
 
 
-def resolve_csv_path(
-    csv_path: str,
+def execute_once(
+    driver: webdriver.Chrome,
     from_date: date,
-    to_date: date
-) -> Path:
+    to_date: date,
+    csv_path: Path,
+) -> None:
     """
-    CSV出力パスを決定する。
+    関数名: execute_once
+    一連の解析・出力処理を1回実行する
 
-    Args:
-        csv_path (str): --csv-path で指定されたパス（None可）
-        from_date (date): From日付
-        to_date (date): To日付
+    引数:
+        driver (webdriver.Chrome): WebDriverインスタンス
+        from_date (date): 検索条件 From
+        to_date (date): 検索条件 To
+        csv_path (Path): 出力先CSVパス
 
-    Returns:
-        Path: CSV出力パス
+    戻り値:
+        None
     """
-    filename = (
-        f"購入履歴_{from_date.strftime('%y%m%d')}_"
-        f"{to_date.strftime('%y%m%d')}.csv"
+    logger.info(f"購入履歴ページ解析処理を実行します。")
+    items = collect_purchase_items(
+        driver,
+        from_date,
+        to_date,
+    )
+    
+    logger.info(f"取引明細ページ解析処理を実行します。")
+    enrich_items_with_detail(driver, items)
+    
+    logger.info(f"CSV出力処理を実行します。")
+    write_csv(csv_path, items)
+
+    logger.info(
+        f"メルカリ購入履歴CSV出力処理が完了しました。\n"
+        f"　検索条件 From : {from_date.strftime("%Y/%m/%d")}\n"
+        f"　検索条件 To   : {to_date.strftime("%Y/%m/%d")}\n"
+        f"　CSV出力先     : {csv_path}\n"
+        f"　出力件数      : {len(items)} 件"
     )
 
-    output_dir = Path("output")
-    output_dir.mkdir(exist_ok=True)
 
-    # --csv-path 未指定
-    if not csv_path:
-        return output_dir / filename
+# =====================
+# Interactive prompt
+# =====================
+def prompt_reexecute_params(
+    from_date: date,
+    to_date: date,
+    csv_path: Path,
+) -> tuple[date, date, Path]:
+    """
+    関数名: prompt_reexecute_params
+    再実行用のパラメータを対話形式で入力・確認する
 
-    path = Path(csv_path)
+    引数:
+        from_date (date): 現在の From日付
+        to_date (date): 現在の To日付
+        csv_path (Path): 現在の CSVパス
 
-    # 絶対パス指定
-    if path.is_absolute():
-        if path.is_dir():
-            return path / filename
-        return path
+    戻り値:
+        tuple[date, date, Path]: (新From日付, 新To日付, 新CSVパス)
+    """
+    while True:
+        print("\n【入力】検索条件を入力してください。")
+        # From
+        while True:
+            s = input(
+                f"検索条件 From yyyy/mm/dd [{from_date.strftime('%Y/%m/%d')}] : "
+            ).strip()
+            if not s:
+                break
+            try:
+                from_date = datetime.strptime(s, "%Y/%m/%d").date()
+                break
+            except ValueError:
+                print("日付形式が不正です。yyyy/mm/dd で入力してください。")
 
-    # 相対パス指定 → output ディレクトリ基準
-    resolved = output_dir / path
-    if resolved.is_dir():
-        return resolved / filename
+        # To
+        while True:
+            s = input(
+                f"検索条件 To   yyyy/mm/dd [{to_date.strftime('%Y/%m/%d')}] : "
+            ).strip()
+            if not s:
+                break
+            try:
+                to_date = datetime.strptime(s, "%Y/%m/%d").date()
+                break
+            except ValueError:
+                print("日付形式が不正です。yyyy/mm/dd で入力してください。")
 
-    return resolved
+        default_csv = resolve_csv_path(None, from_date, to_date)
+
+        s = input(f"CSV出力先 [{default_csv}] : ").strip()
+        new_csv = (
+            resolve_csv_path(s, from_date, to_date)
+            if s else default_csv
+        )
+
+        print("\n【確認】入力内容を確認してください。\n"
+            f"　検索条件 From : {from_date.strftime("%Y/%m/%d")}\n"
+            f"　検索条件 To   : {to_date.strftime("%Y/%m/%d")}\n"
+            f"　CSV出力先     : {new_csv}"
+        )
+
+        while True:
+            print("\n【注意】[C] 続行 を行う前に購入履歴ページを表示してください。")
+            c = input("[C] 続行 / [R] 再入力 / [E] 終了 → ").strip().upper()
+            if c in ("C", "R", "E"):
+                break
+            print("入力が不正です。C / R / E を入力してください。")
+
+        if c == "C":
+            return from_date, to_date, new_csv
+        if c == "E":
+            raise SystemExit
 
 
+# =====================
+# main
+# =====================
 def main() -> None:
     """
-    メイン処理。
+    関数名: main
+    メイン処理。引数の解析、ドライバ起動、ループ処理を制御する。
+
+    引数:
+        なし
+
+    戻り値:
+        None
     """
     global DEBUG, IGNORE_TIMEOUT, logger
 
@@ -503,44 +713,42 @@ def main() -> None:
         to_date,
     )
 
-    # 実行条件表示
-    logger.info(
-        f"メルカリ購入履歴CSV出力処理を実行します。\n"
-        f"　検索条件 From : {from_date.strftime("%Y/%m/%d")}\n"
-        f"　検索条件 To   : {to_date.strftime("%Y/%m/%d")}\n"
-        f"　CSV出力先     : {csv_path}"
-    )
-
     driver = setup_driver()
     try:
         wait_for_manual_login(driver)
 
-        logger.info(f"購入履歴ページ解析処理を実行します。")
-        items = collect_purchase_items(
-            driver,
-            from_date,
-            to_date,
-        )
-        
-        logger.info(f"取引明細ページ解析処理を実行します。")
-        enrich_items_with_detail(driver, items)
-        
-        logger.info(f"CSV出力処理を実行します。")
-        write_csv(csv_path, items)
+        while True:
+            # 実行条件表示
+            logger.info(
+                f"メルカリ購入履歴CSV出力処理を実行します。\n"
+                f"　検索条件 From : {from_date.strftime("%Y/%m/%d")}\n"
+                f"　検索条件 To   : {to_date.strftime("%Y/%m/%d")}\n"
+                f"　CSV出力先     : {csv_path}"
+            )
+            try:
+                execute_once(driver, from_date, to_date, csv_path)
+            except Exception:
+                logger.exception("予期しないエラーが発生しました。")
 
-        logger.info(
-            f"メルカリ購入履歴CSV出力処理が完了しました。\n"
-            f"　検索条件 From : {from_date.strftime("%Y/%m/%d")}\n"
-            f"　検索条件 To   : {to_date.strftime("%Y/%m/%d")}\n"
-            f"　CSV出力先     : {csv_path}\n"
-            f"　出力件数      : {len(items)} 件"
-        )
+            while True:
+                cmd = input(
+                    "\n[E] + Enter: 終了 / [R] + Enter: 再実行 → "
+                ).strip().upper()
+                if cmd in ("E", "R"):
+                    break
+                print("入力が不正です。E または R を入力してください。")
 
-    except Exception:
-        logger.exception("予期しないエラーが発生しました。")
+            if cmd == "E":
+                break
+
+            try:
+                from_date, to_date, csv_path = prompt_reexecute_params(
+                    from_date, to_date, csv_path
+                )
+            except SystemExit:
+                break
 
     finally:
-        input("\nメルカリ購入履歴CSV出力処理が終了しました。Enterキーを押してください。")
         driver.quit()
 
 
