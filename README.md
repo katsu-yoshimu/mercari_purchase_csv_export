@@ -55,7 +55,7 @@ pip install selenium
 mercari_purchase_csv_export.py をダウンロードしたのちに、以下を実行してください。
 
 ```powershell
-python mercari_purchase_csv_export.py --from-date 2026/01/16 --to-date 2026/01/17 --csv-path 購入履歴_20260116_20260117.csv
+python mercari_purchase_csv_export.py --from-date 2026/01/16 --to-date 2026/01/17
 ```
 
 ### 引数一覧
@@ -64,8 +64,9 @@ python mercari_purchase_csv_export.py --from-date 2026/01/16 --to-date 2026/01/1
 | ------------- | ------------------------ | ---------- |
 | `--from-date` | 出力対象 From 日付（yyyy/mm/dd） | 昨日   |
 | `--to-date`   | 出力対象 To 日付（yyyy/mm/dd）   | From 日付   |
-| `--csv-path`  | 出力 CSV ファイルパス            | `output/購入履歴_{From日付:yyyymmdd}_{To日付:yyyymmdd}.csv` |
-| `--ignore-timeout`  | 詳細ページの表示待ちタイムアウト時に例外を送出せず処理を継続する | 例外発生時に処理を継続しない |
+| `--stop-timeout`  | 詳細ページの表示待ちタイムアウト時に例外を送出して処理を中断する | 例外発生時に処理を中断しない |
+
+**注意※CSV出力先は自動生成するため引数から削除いました。**
 
 ## ディレクトリ構成
 

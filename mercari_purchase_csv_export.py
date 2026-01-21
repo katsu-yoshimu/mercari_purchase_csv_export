@@ -21,8 +21,9 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 # グローバル設定
 # =====================
 logger = None
+error_count = 0
 DEBUG = False
-IGNORE_TIMEOUT = False
+IGNORE_TIMEOUT = True
 LOGIN_URL = "https://jp.mercari.com/"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -65,23 +66,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--csv-path",
-        help=(
-            "出力CSVファイルパス\n"
-            "省略時： output/購入履歴_{From日付:yyyymmdd}_{To日付:yyyymmdd}.csv"
-        ),
-    )
-
-    parser.add_argument(
-        "--ignore-timeout",
+        "--stop-timeout",
         action="store_true",
         help=(
             "詳細ページの表示待ちタイムアウト時に"
-            "例外を送出せず処理を継続する\n"
-            "省略時： 例外発生時に処理を継続しない"
+            "例外を送出して処理を中断する\n"
+            "省略時： 例外発生時に処理を中断しない"
         ),
     )
-
     parser.add_argument(
         "--debug",
         action="store_true",
@@ -196,6 +188,8 @@ def save_debug_snapshot(driver: webdriver.Chrome, prefix: str) -> None:
     戻り値:
         None
     """
+    global error_count
+
     jst = timezone(timedelta(hours=9))
     timestamp = datetime.now(jst).strftime("%Y%m%d_%H%M%S")
 
@@ -211,6 +205,7 @@ def save_debug_snapshot(driver: webdriver.Chrome, prefix: str) -> None:
 
         logger.debug("スナップショット保存(PNG): %s", png_path)
         logger.debug("スナップショット保存(HTML): %s", html_path)
+        error_count += 1
 
     except Exception:
         logger.exception("スナップショット保存中にエラーが発生しました。")
@@ -480,8 +475,9 @@ def fetch_purchase_detail(
     # --- 商品代金 要素の表示待ち（最大5秒） ---
     try:
         WebDriverWait(driver, 5).until(
-            EC.visibility_of_element_located(
-                (By.XPATH, '//span[contains(text(), "商品代金")]')
+            lambda d: (
+                d.find_elements(By.XPATH, '//span[contains(text(), "商品代金")]')
+                or d.find_elements(By.XPATH, '//p[contains(text(), "商品代金")]')
             )
         )
         logger.debug("詳細の商品代金の表示を確認しました。")
@@ -566,6 +562,9 @@ def execute_once(
     戻り値:
         None
     """
+    global error_count
+    error_count = 0
+
     logger.info(f"購入履歴ページ解析処理を実行します。")
     items = collect_purchase_items(
         driver,
@@ -579,12 +578,18 @@ def execute_once(
     logger.info(f"CSV出力処理を実行します。")
     write_csv(csv_path, items)
 
+    if error_count > 0:
+        error_count_info = f"{error_count} 件  ★★★  ログファイルとスナップショットファイルをご確認ください  ★★★"
+    else:
+        error_count_info = f"{error_count} 件"
+        
     logger.info(
         f"メルカリ購入履歴CSV出力処理が完了しました。\n"
         f"　検索条件 From : {from_date.strftime("%Y/%m/%d")}\n"
         f"　検索条件 To   : {to_date.strftime("%Y/%m/%d")}\n"
         f"　CSV出力先     : {csv_path}\n"
-        f"　出力件数      : {len(items)} 件"
+        f"　出力件数      : {len(items)} 件\n"
+        f"　エラー件数    : {error_count_info}"
     )
 
 
@@ -688,7 +693,7 @@ def main() -> None:
 
     # --- DEBUG、IGNORE_TIMEOUT フラグ反映 ---
     DEBUG = args.debug
-    IGNORE_TIMEOUT = args.ignore_timeout
+    IGNORE_TIMEOUT = not args.stop_timeout
 
     # --- 日本時間で「今日」を取得 ---
     jst = timezone(timedelta(hours=9))
@@ -706,9 +711,9 @@ def main() -> None:
     else:
         to_date = from_date
     
-    # csv-path：省略時は自動生成
+    # csv-path：自動生成
     csv_path = resolve_csv_path(
-        args.csv_path,
+        None,
         from_date,
         to_date,
     )
@@ -718,6 +723,13 @@ def main() -> None:
         wait_for_manual_login(driver)
 
         while True:
+            try:
+                from_date, to_date, csv_path = prompt_reexecute_params(
+                    from_date, to_date, csv_path
+                )
+            except SystemExit:
+                break
+
             # 実行条件表示
             logger.info(
                 f"メルカリ購入履歴CSV出力処理を実行します。\n"
@@ -739,13 +751,6 @@ def main() -> None:
                 print("入力が不正です。E または R を入力してください。")
 
             if cmd == "E":
-                break
-
-            try:
-                from_date, to_date, csv_path = prompt_reexecute_params(
-                    from_date, to_date, csv_path
-                )
-            except SystemExit:
                 break
 
     finally:
