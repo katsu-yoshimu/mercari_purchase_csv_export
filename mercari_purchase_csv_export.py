@@ -15,6 +15,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
+from urllib3.exceptions import ReadTimeoutError
 
 
 # =====================
@@ -32,6 +33,20 @@ USER_AGENT = (
 )
 INTERVAL_SEC = 3.0
 
+# =====================
+# Retry / Wait 設定（チューニング用）
+# =====================
+
+# 一覧ページ用表示待ち時間
+LIST_WAIT_SEC = 10
+
+# 詳細ページ用表示待ち時間
+DETAIL_WAIT_SEC = 10
+
+# リトライ制御
+RETRY_MAX_COUNT = 5          # 最大リトライ回数
+RETRY_BASE_INTERVAL = 3.0    # 初期待機秒
+RETRY_INTERVAL_MULTIPLIER = 2.0  # 倍率（例: 1.2 / 1.5 / 2.0）
 
 # =====================
 # 引数
@@ -163,7 +178,7 @@ def wait_for_manual_login(driver: webdriver.Chrome) -> None:
     login_url = LOGIN_URL
     # テスト用URL
     if DEBUG:
-        login_url = "file:///C:/work/02_%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA%E8%B3%BC%E5%85%A5%E5%B1%A5%E6%AD%B4CSV%E5%87%BA%E5%8A%9B/0116%E5%85%A5%E6%89%8B%E8%B3%87%E6%96%99/%E8%B3%BC%E5%85%A5%E3%81%97%E3%81%9F%E5%95%86%E5%93%81%20-%20%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA.mhtml"
+        login_url = "file:///C:/work/02_%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA%E8%B3%BC%E5%85%A5%E5%B1%A5%E6%AD%B4CSV%E5%87%BA%E5%8A%9B/0116%E5%85%A5%E6%89%8B%E8%B3%87%E6%96%99/%E8%B3%BC%E5%85%A5%E3%81%97%E3%81%9F%E5%95%86%E5%93%81%20-%20%E3%83%86%E3%82%B9%E3%83%88.mhtml"
 
     driver.get(login_url)
     input(
@@ -310,9 +325,9 @@ def collect_purchase_items(
 
     results: List[Dict[str, str]] = []
 
-    # --- 商品代金 要素の表示待ち（最大5秒） ---
+    # --- 商品代金 要素の表示待ち ---
     try:
-        WebDriverWait(driver, 5).until(
+        WebDriverWait(driver, LIST_WAIT_SEC).until(
             EC.visibility_of_element_located(
                 (By.XPATH, "//ul[@data-testid='purchase-item-list']/li")
             )
@@ -469,77 +484,124 @@ def fetch_purchase_detail(
     戻り値:
         Dict[str, str]: "price", "item_id", "order_number" をキーに持つ辞書
     """
-    driver.get(detail_url)
-    logger.debug(f"詳細URL: {detail_url}")
+    last_exception: Exception | None = None
 
-    # --- 商品代金 要素の表示待ち（最大5秒） ---
-    try:
-        WebDriverWait(driver, 5).until(
-            lambda d: (
-                d.find_elements(By.XPATH, '//span[contains(text(), "商品代金")]')
-                or d.find_elements(By.XPATH, '//p[contains(text(), "商品代金")]')
+    for retry in range(1, RETRY_MAX_COUNT + 1):
+        try:
+            logger.info(
+                f"詳細取得開始 retry={retry}/{RETRY_MAX_COUNT} url={detail_url}"
             )
-        )
-        logger.debug("詳細の商品代金の表示を確認しました。")
-    except TimeoutException:
-        save_debug_snapshot(driver, "timeout_detail_price")
-        logger.warning("詳細の商品代金の表示待ちがタイムアウトしました。")
-        if not IGNORE_TIMEOUT:
-            raise
-        
-    # 金額（2パターン対応）
-    price = get_text_or_empty(
-        driver,
-        (
-            '//span[contains(text(), "商品代金")]'
-            '/parent::div/parent::div/following-sibling::div'
-        ),
-    )
 
-    if not price:
-        price = get_text_or_empty(
-            driver,
-            (
-                '//p[contains(text(), "商品代金")]'
-                '/parent::div/following-sibling::div'
-            ),
-        )
+            # --- URLアクセス ---
+            driver.get(detail_url)
 
-    # --- 商品ID または 注文番号 の存在待ち（最大5秒） ---
-    try:
-        WebDriverWait(driver, 5).until(
-            lambda d: (
-                d.find_elements(By.XPATH, '//p[@data-partner-id="item-id"]')
-                or d.find_elements(By.XPATH, '//p[contains(text(), "注文番号")]')
+            # --- 商品代金 要素の表示待ち ---
+            try:
+                WebDriverWait(driver, DETAIL_WAIT_SEC).until(
+                    lambda d: (
+                        d.find_elements(By.XPATH, '//span[contains(text(), "商品代金")]')
+                        or d.find_elements(By.XPATH, '//p[contains(text(), "商品代金")]')
+                    )
+                )
+            except TimeoutException as e:
+                label = "商品代金"
+                raise TimeoutException(f"timeout at [{label}]") from e
+
+            # 金額（2パターン対応）
+            price = get_text_or_empty(
+                driver,
+                (
+                    '//span[contains(text(), "商品代金")]'
+                    '/parent::div/parent::div/following-sibling::div'
+                ),
             )
-        )
-        logger.debug("詳細の商品ID／注文番号の表示を確認しました。")
+            
+            if not price:
+                price = get_text_or_empty(
+                    driver,
+                    (
+                        '//p[contains(text(), "商品代金")]'
+                        '/parent::div/following-sibling::div'
+                    ),
+                )
 
-    except TimeoutException:
-        save_debug_snapshot(driver, "timeout_detail_id_or_order")
-        logger.warning("詳細の商品ID／注文番号の表示待ちがタイムアウトしました。")
+            # --- 商品ID または 注文番号 要素の表示待ち ---
+            try:
+                WebDriverWait(driver, DETAIL_WAIT_SEC).until(
+                    lambda d: (
+                        d.find_elements(By.XPATH, '//p[@data-partner-id="item-id"]')
+                        or d.find_elements(By.XPATH, '//p[contains(text(), "注文番号")]')
+                    )
+                )
+            except TimeoutException as e:
+                label = "商品ID／注文番号"
+                raise TimeoutException(f"timeout at [{label}]") from e
+
+            # 商品ID
+            item_id = get_text_or_empty(
+                driver,
+                '//p[@data-partner-id="item-id"]',
+            )
+
+            # 注文番号
+            order_number = get_text_or_empty(
+                driver,
+                (
+                    '//p[contains(text(), "注文番号")]'
+                    '/parent::div/following-sibling::div//p'
+                ),
+            )
+
+            # --- リトライ条件判定 ---
+            if price and (item_id or order_number):
+                return {
+                    "price": price,
+                    "item_id": item_id,
+                    "order_number": order_number,
+                }
+
+            logger.warning(
+                f"取得条件未達（price:{price} / item_id:{item_id} / order_number:{order_number} 不足）"
+            )
+
+        except Exception as e:
+            if isinstance(e, (TimeoutException, WebDriverException, ReadTimeoutError)):
+                # 想定内エラー
+                logger.warning(
+                    "詳細取得リトライ %d/%d 失敗: %s: %s",
+                    retry,
+                    RETRY_MAX_COUNT,
+                    type(e).__name__,
+                    str(e).rstrip(),
+                )
+                last_exception = e
+            else:
+                # 想定外
+                logger.exception("想定外エラーが発生しました。")
+                last_exception = e
+                break
+
+        # --- リトライ待機 ---
+        if retry < RETRY_MAX_COUNT:
+            wait_sec = RETRY_BASE_INTERVAL * (RETRY_INTERVAL_MULTIPLIER ** (retry - 1))
+            logger.info(f"{wait_sec} 秒後にリトライします。")
+            sleep(wait_sec)
+
+    # --- リトライアウト ---
+    save_debug_snapshot(driver, f"retryout_detail_r{RETRY_MAX_COUNT}")
+    logger.error("詳細取得がリトライアウトしました。")
+
+    if last_exception:
+        logger.error(f"最終エラー内容: {str(last_exception).rstrip()}")
         if not IGNORE_TIMEOUT:
-            raise
+            raise RuntimeError(
+                f"詳細取得リトライアウト: {detail_url}"
+            ) from last_exception
         
-    # 商品ID
-    item_id = get_text_or_empty(
-        driver,
-        '//p[@data-partner-id="item-id"]',
-    )
-
-    # 注文番号
-    order_number = get_text_or_empty(
-        driver,
-        (
-            '//p[contains(text(), "注文番号")]'
-            '/parent::div/following-sibling::div//p'
-        ),
-    )
-
     return {
-        "price": price,
-        "item_id": item_id,
-        "order_number": order_number,
+        "price": "",
+        "item_id": "",
+        "order_number": "",
     }
 
 
