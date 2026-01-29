@@ -49,6 +49,12 @@ RETRY_BASE_INTERVAL = 3.0    # 初期待機秒
 RETRY_INTERVAL_MULTIPLIER = 2.0  # 倍率（例: 1.2 / 1.5 / 2.0）
 
 # =====================
+# 「もっと見る」対応
+# =====================
+MORE_CLICK_SLEEP_SEC = 3          # 「もっと見る」クリック後の待機秒
+MORE_CLICK_CONFIRM_INTERVAL = 5   # 何回ごとに継続確認するか
+
+# =====================
 # 引数
 # =====================
 def parse_args() -> argparse.Namespace:
@@ -304,6 +310,71 @@ def get_text_or_empty(
 # =====================
 # Main logic
 # =====================
+def more_click(
+    driver: webdriver.Chrome,
+    DATETIME_FORMAT: str,
+    from_date: date,
+) -> None:
+    more_click_count = 0
+
+    while True:
+        items = driver.find_elements(
+            By.XPATH,
+            "//ul[@data-testid='purchase-item-list']/li",
+        )
+
+        last_date_text = items[-1].find_element(
+            By.XPATH,
+            ".//p[@data-testid='item-label']"
+            "/following-sibling::div//span",
+        ).text
+        last_date = datetime.strptime(last_date_text, DATETIME_FORMAT).date()
+
+        logger.info(
+            "一覧件数=%d / 最終行購入日=%s / From=%s / 判定=%s",
+            len(items),
+            last_date,
+            from_date,
+            "最終行 < From" if last_date and last_date < from_date else "From >= 最終行",
+        )
+
+        # 最終行 < From → この一覧で処理開始
+        if last_date and last_date < from_date:
+            return
+
+        # From <= 最終行 → もっと見る
+        try:
+            more_click_count += 1
+            logger.info("「もっと見る」クリック %d 回目", more_click_count)
+
+            # 5回ごとに継続確認
+            if more_click_count % MORE_CLICK_CONFIRM_INTERVAL == 0:
+                c = input(
+                    "[C] 継続 / [E] 中止 → "
+                ).strip().upper()
+                if c == "E":
+                    logger.info("ユーザー操作により処理を中止しました。")
+                    raise Exception("「もっと見る」クリックにて処理を中止しました")
+
+            more_btn = driver.find_element(
+                By.XPATH,
+                '//button//span[contains(text(),"もっと見る")]'
+            )
+            more_btn.click()
+            sleep(MORE_CLICK_SLEEP_SEC)
+
+        except WebDriverException:
+            # クリックできないとき、再度ページを確認
+            logger.exception("「もっと見る」ボタンが見つかりません。")
+            input(
+                "【確認】購入履歴ページを再表示したら Enterキーを押してください。"
+            )
+            # 再トライ
+            continue
+
+    return
+
+
 def collect_purchase_items(
     driver: webdriver.Chrome,
     from_date: date,
@@ -335,8 +406,18 @@ def collect_purchase_items(
         logger.debug("購入履歴の一覧表の表示を確認しました。")
     except TimeoutException:
         save_debug_snapshot(driver, "timeout_purchase_list_")
-        logger.warning("購入履歴の一覧表の表示待ちがタイムアウトしました。")
-        raise
+        logger.warning(
+            "購入履歴の一覧表の表示待ちがタイムアウトしました。"
+            "ページを再表示してください。"
+        )
+        input(
+            "【確認】購入履歴ページを再表示したら Enterキーを押してください。"
+        )
+        # 再トライ
+        return collect_purchase_items(driver, from_date, to_date)
+
+    # 「もっと見る」クリック対応
+    more_click(driver, DATETIME_FORMAT, from_date)
 
     items = driver.find_elements(
         By.XPATH,
