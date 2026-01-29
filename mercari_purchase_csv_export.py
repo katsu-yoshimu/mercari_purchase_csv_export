@@ -335,7 +335,7 @@ def more_click(
             len(items),
             last_date,
             from_date,
-            "最終行 < From" if last_date and last_date < from_date else "From >= 最終行",
+            "最終行 ＜ From" if last_date and last_date < from_date else "最終行 ≧ From",
         )
 
         # 最終行 < From → この一覧で処理開始
