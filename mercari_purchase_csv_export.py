@@ -53,6 +53,7 @@ RETRY_INTERVAL_MULTIPLIER = 2.0  # 倍率（例: 1.2 / 1.5 / 2.0）
 # =====================
 MORE_CLICK_SLEEP_SEC = 3          # 「もっと見る」クリック後の待機秒
 MORE_CLICK_CONFIRM_INTERVAL = 5   # 何回ごとに継続確認するか
+MAX_NO_GROW_COUNT = 3             # 行数が増えない状態の許容回数
 
 # =====================
 # 引数
@@ -94,6 +95,10 @@ def parse_args() -> argparse.Namespace:
             "例外を送出して処理を中断する\n"
             "省略時： 例外発生時に処理を中断しない"
         ),
+    )
+    parser.add_argument(
+        "--temp-csv",
+        help="既存の一時CSVを指定すると詳細取得から再開"
     )
     parser.add_argument(
         "--debug",
@@ -307,72 +312,108 @@ def get_text_or_empty(
         return ""
 
 
+# ★ToDo★追加関数に関数ヘッダ追加
+def get_temp_csv_path(from_date: date, to_date: date) -> Path:
+    output_dir = Path("output")
+    output_dir.mkdir(exist_ok=True)
+
+    return output_dir / (
+        f"temp_購入履歴_{from_date.strftime('%Y%m%d')}_"
+        f"{to_date.strftime('%Y%m%d')}.csv"
+    )
+
+
+# ★ToDo★追加関数に関数ヘッダ追加
+def append_temp_csv(
+    path: Path,
+    rows: List[Dict[str, str]],
+) -> None:
+    is_new = not path.exists()
+
+    with open(path, "a", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        if is_new:
+            writer.writerow(
+                ["detail_url", "item_name", "purchase_datetime"]
+            )
+
+        for r in rows:
+            writer.writerow(
+                [
+                    r["detail_url"],
+                    r["item_name"],
+                    r["purchase_datetime"],
+                ]
+            )
+
+
+# ★ToDo★追加関数に関数ヘッダ追加
+def load_results_from_temp(
+    temp_csv_path: Path,
+) -> List[Dict[str, str]]:
+    results: List[Dict[str, str]] = []
+
+    if not temp_csv_path.exists():
+        return results
+
+    with open(temp_csv_path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            results.append(
+                {
+                    "detail_url": row["detail_url"],
+                    "item_name": row["item_name"],
+                    "purchase_datetime": row["purchase_datetime"],
+                }
+            )
+    return results
+
+
 # =====================
 # Main logic
 # =====================
-def more_click(
-    driver: webdriver.Chrome,
-    DATETIME_FORMAT: str,
+# ★ToDo★追加関数に関数ヘッダ追加
+def extract_new_rows(
+    items,
+    start_index: int,
     from_date: date,
-) -> None:
-    more_click_count = 0
+    to_date: date,
+    datetime_format: str,
+) -> tuple[list[dict], bool]:
+    """
+    戻り値:
+      rows: CSV追記用データ
+      reached_past: Fromより過去に到達したか
+    """
+    rows = []
 
-    while True:
-        items = driver.find_elements(
-            By.XPATH,
-            "//ul[@data-testid='purchase-item-list']/li",
-        )
-
-        last_date_text = items[-1].find_element(
+    for item in items[start_index:]:
+        detail_url = item.find_element(By.XPATH, "./a").get_attribute("href")
+        item_name = item.find_element(
+            By.XPATH, ".//p[@data-testid='item-label']"
+        ).text
+        dt_text = item.find_element(
             By.XPATH,
             ".//p[@data-testid='item-label']"
             "/following-sibling::div//span",
         ).text
-        last_date = datetime.strptime(last_date_text, DATETIME_FORMAT).date()
 
-        logger.info(
-            "一覧件数=%d / 最終行購入日=%s / From=%s / 判定=%s",
-            len(items),
-            last_date,
-            from_date,
-            "最終行 ＜ From" if last_date and last_date < from_date else "最終行 ≧ From",
-        )
+        purchase_dt = datetime.strptime(dt_text, datetime_format)
+        purchase_date = purchase_dt.date()
 
-        # 最終行 < From → この一覧で処理開始
-        if last_date and last_date < from_date:
-            return
+        if purchase_date < from_date:
+            return rows, True
 
-        # From <= 最終行 → もっと見る
-        try:
-            more_click_count += 1
-            logger.info("「もっと見る」クリック %d 回目", more_click_count)
-
-            # 5回ごとに継続確認
-            if more_click_count % MORE_CLICK_CONFIRM_INTERVAL == 0:
-                c = input(
-                    "[C] 継続 / [E] 中止 → "
-                ).strip().upper()
-                if c == "E":
-                    logger.info("ユーザー操作により処理を中止しました。")
-                    raise Exception("「もっと見る」クリックにて処理を中止しました")
-
-            more_btn = driver.find_element(
-                By.XPATH,
-                '//button//span[contains(text(),"もっと見る")]'
+        if from_date <= purchase_date <= to_date:
+            rows.append(
+                {
+                    "detail_url": detail_url,
+                    "item_name": item_name,
+                    "purchase_datetime": purchase_dt.strftime(datetime_format),
+                }
             )
-            more_btn.click()
-            sleep(MORE_CLICK_SLEEP_SEC)
 
-        except WebDriverException:
-            # クリックできないとき、再度ページを確認
-            logger.exception("「もっと見る」ボタンが見つかりません。")
-            input(
-                "【確認】購入履歴ページを再表示したら Enterキーを押してください。"
-            )
-            # 再トライ
-            continue
-
-    return
+    return rows, False
 
 
 def collect_purchase_items(
@@ -393,8 +434,12 @@ def collect_purchase_items(
         List[Dict[str, str]]: 商品名、購入日時、詳細ページURLを含む辞書のリスト
     """
     DATETIME_FORMAT = "%Y/%m/%d %H:%M"
-
-    results: List[Dict[str, str]] = []
+    temp_csv_path = get_temp_csv_path(from_date, to_date)
+    
+    # --- 既存の一時ファイルがあれば削除 ---
+    if temp_csv_path.exists():
+        logger.info("既存の一時ファイルを削除します: %s", temp_csv_path)
+        temp_csv_path.unlink()
 
     # --- 商品代金 要素の表示待ち ---
     try:
@@ -416,48 +461,97 @@ def collect_purchase_items(
         # 再トライ
         return collect_purchase_items(driver, from_date, to_date)
 
-    # 「もっと見る」クリック対応
-    more_click(driver, DATETIME_FORMAT, from_date)
+    processed_count = 0  # 前回処理済みの一覧行数
+    no_grow_count = 0    # 行数が増えなかった連続回数
+    more_click_count = 0 # 「もっと見る」クリック回数
 
-    items = driver.find_elements(
-        By.XPATH,
-        "//ul[@data-testid='purchase-item-list']/li",
-    )
-
-    for item in items:
-        detail_url = item.find_element(
+    while True:
+        items = driver.find_elements(
             By.XPATH,
-            "./a",
-        ).get_attribute("href")
-
-        item_name = item.find_element(
-            By.XPATH,
-            ".//p[@data-testid='item-label']",
-        ).text
-
-        datetime_text = item.find_element(
+            "//ul[@data-testid='purchase-item-list']/li",
+        )
+        # 処理経過表示
+        last_date_text = items[-1].find_element(
             By.XPATH,
             ".//p[@data-testid='item-label']"
             "/following-sibling::div//span",
         ).text
+        last_date = datetime.strptime(last_date_text, DATETIME_FORMAT).date()
+        logger.info(
+            "一覧件数=%d / 最終行購入日=%s / From=%s / 判定=%s",
+            len(items),
+            last_date,
+            from_date,
+            "最終行 ＜ From" if last_date and last_date < from_date else "最終行 ≧ From",
+        )
 
-        purchase_dt = datetime.strptime(datetime_text, DATETIME_FORMAT)
-        purchase_date = purchase_dt.date()
+        # 追加行を抽出
+        rows, reached_past = extract_new_rows(
+            items,
+            processed_count,
+            from_date,
+            to_date,
+            DATETIME_FORMAT,
+        )
+        
+        # 追加行を一時ファイル出力
+        if rows:
+            append_temp_csv(temp_csv_path, rows)
 
-        # 降順前提：From日付より古くなったら終了
-        if purchase_date < from_date:
+        if reached_past:
+            logger.info(
+                "Fromより過去に到達したため、"
+                "一覧ページのデータ抽出処理を終了します。"
+            )
+            break
+        
+        # 行数増加の無のとき、カウントアップ／有のとき、リセット
+        if processed_count == len(items):
+            no_grow_count += 1
+        else:
+            no_grow_count = 0
+
+        if no_grow_count >= MAX_NO_GROW_COUNT:
+            logger.info(
+                f"行数増加なし連続回数が許容回数（{MAX_NO_GROW_COUNT}回）を超過したため、"
+                "一覧ページからデータ抽出処理を終了します。"
+            )
             break
 
-        if from_date <= purchase_date <= to_date:
-            results.append(
-                {
-                    "detail_url": detail_url,
-                    "item_name": item_name,
-                    "purchase_datetime": purchase_dt.strftime(DATETIME_FORMAT),
-                }
-            )
+        processed_count = len(items)
+        more_click_count += 1
 
-    return results
+        # 5回ごとに継続確認
+        if more_click_count % MORE_CLICK_CONFIRM_INTERVAL == 0:
+            c = input(
+                "[C] 継続 / [E] 中止 → "
+            ).strip().upper()
+            if c == "E":
+                logger.info(
+                    "ユーザー操作により一覧ページのデータ抽出処理を中止し、"
+                    f"抽出済データ[{processed_count}件]で処理を継続します。"
+                )
+                break    
+        
+        # 「もっと見る」クリック
+        try:
+            more_btn = driver.find_element(
+                By.XPATH,
+                '//button//span[contains(text(),"もっと見る")]'
+            )
+            more_btn.click()
+            sleep(MORE_CLICK_SLEEP_SEC)
+
+        except WebDriverException:
+            # クリックできないとき、再度ページを確認
+            logger.exception("「もっと見る」ボタンが見つかりません。")
+            input(
+                "【確認】購入履歴ページを再表示したら Enterキーを押してください。"
+            )
+            # 再トライ
+            continue
+
+    return load_results_from_temp(temp_csv_path)
 
 
 def enrich_items_with_detail(
