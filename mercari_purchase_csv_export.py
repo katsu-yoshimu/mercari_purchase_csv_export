@@ -17,6 +17,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from urllib3.exceptions import ReadTimeoutError
 
+from tab_controller import TabController
 
 # =====================
 # グローバル設定
@@ -175,13 +176,14 @@ def setup_driver() -> webdriver.Chrome:
     return webdriver.Chrome(service=service, options=options)
 
 
-def wait_for_manual_login(driver: webdriver.Chrome) -> None:
+def wait_for_manual_login(driver: webdriver.Chrome, tabs: TabController) -> None:
     """
     関数名: wait_for_manual_login
     手動ログインを促して処理を中断する
 
     引数:
         driver (webdriver.Chrome): WebDriverインスタンス
+        tabs (TabController): タブ管理クラス
 
     戻り値:
         None
@@ -191,6 +193,7 @@ def wait_for_manual_login(driver: webdriver.Chrome) -> None:
     if DEBUG:
         login_url = "file:///C:/work/02_%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA%E8%B3%BC%E5%85%A5%E5%B1%A5%E6%AD%B4CSV%E5%87%BA%E5%8A%9B/0116%E5%85%A5%E6%89%8B%E8%B3%87%E6%96%99/%E8%B3%BC%E5%85%A5%E3%81%97%E3%81%9F%E5%95%86%E5%93%81%20-%20%E3%83%86%E3%82%B9%E3%83%88.mhtml"
 
+    tabs.use_list_page()
     driver.get(login_url)
     input(
         "【確認】\n"
@@ -418,6 +421,7 @@ def extract_new_rows(
 
 def collect_purchase_items(
     driver: webdriver.Chrome,
+    tabs: TabController,
     from_date: date,
     to_date: date,
 ) -> List[Dict[str, str]]:
@@ -427,6 +431,7 @@ def collect_purchase_items(
 
     引数:
         driver (webdriver.Chrome): WebDriverインスタンス
+        tabs (TabController): タブ管理クラス
         from_date (date): 抽出開始日
         to_date (date): 抽出終了日
 
@@ -443,6 +448,7 @@ def collect_purchase_items(
 
     # --- 商品代金 要素の表示待ち ---
     try:
+        tabs.use_list_page()
         WebDriverWait(driver, LIST_WAIT_SEC).until(
             EC.visibility_of_element_located(
                 (By.XPATH, "//ul[@data-testid='purchase-item-list']/li")
@@ -466,6 +472,7 @@ def collect_purchase_items(
     more_click_count = 0 # 「もっと見る」クリック回数
 
     while True:
+        tabs.use_list_page()
         items = driver.find_elements(
             By.XPATH,
             "//ul[@data-testid='purchase-item-list']/li",
@@ -535,6 +542,7 @@ def collect_purchase_items(
         
         # 「もっと見る」クリック
         try:
+            tabs.use_list_page()
             more_btn = driver.find_element(
                 By.XPATH,
                 '//button//span[contains(text(),"もっと見る")]'
@@ -556,6 +564,7 @@ def collect_purchase_items(
 
 def enrich_items_with_detail(
     driver: webdriver.Chrome,
+    tabs: TabController,
     items: List[Dict[str, str]],
 ) -> None:
     """
@@ -565,6 +574,7 @@ def enrich_items_with_detail(
 
     引数:
         driver (webdriver.Chrome): WebDriverインスタンス
+        tabs (TabController): タブ管理クラス
         items (List[Dict[str, str]]): 更新対象の商品情報のリスト
 
     戻り値:
@@ -582,7 +592,7 @@ def enrich_items_with_detail(
         if DEBUG:
             detail_url = "file:///C:/work/02_%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA%E8%B3%BC%E5%85%A5%E5%B1%A5%E6%AD%B4CSV%E5%87%BA%E5%8A%9B/0116%E5%85%A5%E6%89%8B%E8%B3%87%E6%96%99/%E5%8F%96%E5%BC%95%E7%94%BB%E9%9D%A2%20-%20%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA.mhtml"
 
-        detail = fetch_purchase_detail(driver, detail_url)
+        detail = fetch_purchase_detail(driver, tabs, detail_url)
 
         item["price"] = detail["price"]
 
@@ -646,6 +656,7 @@ def write_csv(csv_path: str, items: List[Dict[str, str]]) -> None:
 
 def fetch_purchase_detail(
     driver: webdriver.Chrome,
+    tabs: TabController,
     detail_url: str,
 ) -> Dict[str, str]:
     """
@@ -654,6 +665,7 @@ def fetch_purchase_detail(
 
     引数:
         driver (webdriver.Chrome): WebDriverインスタンス
+        tabs (TabController): タブ管理クラス
         detail_url (str): 詳細ページURL
     
     戻り値:
@@ -668,6 +680,7 @@ def fetch_purchase_detail(
             )
 
             # --- URLアクセス ---
+            tabs.use_detail_page()
             driver.get(detail_url)
 
             # --- 商品代金 要素の表示待ち ---
@@ -782,6 +795,7 @@ def fetch_purchase_detail(
 
 def execute_once(
     driver: webdriver.Chrome,
+    tabs: TabController,
     from_date: date,
     to_date: date,
     csv_path: Path,
@@ -792,6 +806,7 @@ def execute_once(
 
     引数:
         driver (webdriver.Chrome): WebDriverインスタンス
+        tabs (TabController): タブ管理クラス
         from_date (date): 検索条件 From
         to_date (date): 検索条件 To
         csv_path (Path): 出力先CSVパス
@@ -805,12 +820,13 @@ def execute_once(
     logger.info(f"購入履歴ページ解析処理を実行します。")
     items = collect_purchase_items(
         driver,
+        tabs,
         from_date,
         to_date,
     )
     
     logger.info(f"取引明細ページ解析処理を実行します。")
-    enrich_items_with_detail(driver, items)
+    enrich_items_with_detail(driver, tabs, items)
     
     logger.info(f"CSV出力処理を実行します。")
     write_csv(csv_path, items)
@@ -956,8 +972,9 @@ def main() -> None:
     )
 
     driver = setup_driver()
+    tabs = TabController(driver)
     try:
-        wait_for_manual_login(driver)
+        wait_for_manual_login(driver, tabs)
 
         while True:
             try:
@@ -975,7 +992,7 @@ def main() -> None:
                 f"　CSV出力先     : {csv_path}"
             )
             try:
-                execute_once(driver, from_date, to_date, csv_path)
+                execute_once(driver, tabs, from_date, to_date, csv_path)
             except Exception:
                 logger.exception("予期しないエラーが発生しました。")
 
