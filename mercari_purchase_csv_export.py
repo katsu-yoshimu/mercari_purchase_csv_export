@@ -98,10 +98,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--temp-csv",
-        help="既存の一時CSVを指定すると詳細取得から再開"
-    )
-    parser.add_argument(
         "--debug",
         action="store_true",
         help=argparse.SUPPRESS,
@@ -316,18 +312,7 @@ def get_text_or_empty(
 
 
 # ★ToDo★追加関数に関数ヘッダ追加
-def get_temp_csv_path(from_date: date, to_date: date) -> Path:
-    output_dir = Path("output")
-    output_dir.mkdir(exist_ok=True)
-
-    return output_dir / (
-        f"temp_購入履歴_{from_date.strftime('%Y%m%d')}_"
-        f"{to_date.strftime('%Y%m%d')}.csv"
-    )
-
-
-# ★ToDo★追加関数に関数ヘッダ追加
-def append_temp_csv(
+def append_csv(
     path: Path,
     rows: List[Dict[str, str]],
 ) -> None:
@@ -337,39 +322,27 @@ def append_temp_csv(
         writer = csv.writer(f)
         if is_new:
             writer.writerow(
-                ["detail_url", "item_name", "purchase_datetime"]
+                [
+                    "No.",
+                    "商品名",
+                    "金額",
+                    "購入日時",
+                    "商品ID／注文番号",
+                    "詳細ページ",
+                ]
             )
 
         for r in rows:
             writer.writerow(
                 [
-                    r["detail_url"],
+                    r.get("no", ""),
                     r["item_name"],
+                    r.get("price", ""),
                     r["purchase_datetime"],
+                    r.get("item_or_order_id", ""),
+                    r["detail_url"],
                 ]
             )
-
-
-# ★ToDo★追加関数に関数ヘッダ追加
-def load_results_from_temp(
-    temp_csv_path: Path,
-) -> List[Dict[str, str]]:
-    results: List[Dict[str, str]] = []
-
-    if not temp_csv_path.exists():
-        return results
-
-    with open(temp_csv_path, newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            results.append(
-                {
-                    "detail_url": row["detail_url"],
-                    "item_name": row["item_name"],
-                    "purchase_datetime": row["purchase_datetime"],
-                }
-            )
-    return results
 
 
 # =====================
@@ -382,6 +355,7 @@ def extract_new_rows(
     from_date: date,
     to_date: date,
     datetime_format: str,
+    no: int,
 ) -> tuple[list[dict], bool]:
     """
     戻り値:
@@ -389,8 +363,9 @@ def extract_new_rows(
       reached_past: Fromより過去に到達したか
     """
     rows = []
+    append_count = no
 
-    for item in items[start_index:]:
+    for index, item in enumerate(items[start_index:]):
         detail_url = item.find_element(By.XPATH, "./a").get_attribute("href")
         item_name = item.find_element(
             By.XPATH, ".//p[@data-testid='item-label']"
@@ -405,18 +380,20 @@ def extract_new_rows(
         purchase_date = purchase_dt.date()
 
         if purchase_date < from_date:
-            return rows, True
+            return rows, True, append_count
 
         if from_date <= purchase_date <= to_date:
+            append_count += 1
             rows.append(
                 {
+                    "no": append_count,
                     "detail_url": detail_url,
                     "item_name": item_name,
                     "purchase_datetime": purchase_dt.strftime(datetime_format),
                 }
             )
 
-    return rows, False
+    return rows, False, append_count
 
 
 def collect_purchase_items(
@@ -424,6 +401,7 @@ def collect_purchase_items(
     tabs: TabController,
     from_date: date,
     to_date: date,
+    csv_path: str,
 ) -> List[Dict[str, str]]:
     """
     関数名: collect_purchase_items
@@ -439,12 +417,11 @@ def collect_purchase_items(
         List[Dict[str, str]]: 商品名、購入日時、詳細ページURLを含む辞書のリスト
     """
     DATETIME_FORMAT = "%Y/%m/%d %H:%M"
-    temp_csv_path = get_temp_csv_path(from_date, to_date)
     
-    # --- 既存の一時ファイルがあれば削除 ---
-    if temp_csv_path.exists():
-        logger.info("既存の一時ファイルを削除します: %s", temp_csv_path)
-        temp_csv_path.unlink()
+    # --- CSVファイルがあれば削除 ---
+    if csv_path.exists():
+        logger.info("CSVファイルを削除します: %s", csv_path)
+        csv_path.unlink()
 
     # --- 商品代金 要素の表示待ち ---
     try:
@@ -470,6 +447,7 @@ def collect_purchase_items(
     processed_count = 0  # 前回処理済みの一覧行数
     no_grow_count = 0    # 行数が増えなかった連続回数
     more_click_count = 0 # 「もっと見る」クリック回数
+    no = 0
 
     while True:
         tabs.use_list_page()
@@ -493,17 +471,23 @@ def collect_purchase_items(
         )
 
         # 追加行を抽出
-        rows, reached_past = extract_new_rows(
+        rows, reached_past, no = extract_new_rows(
             items,
             processed_count,
             from_date,
             to_date,
             DATETIME_FORMAT,
+            no,
         )
-        
+        # logger.debug(f"items:[{len(items)}]件 processed_count:[{processed_count}]")
+
         # 追加行を一時ファイル出力
         if rows:
-            append_temp_csv(temp_csv_path, rows)
+            logger.info(f"取引明細ページ解析処理を実行します。")
+            enrich_items_with_detail(driver, tabs, rows)
+            
+            logger.info(f"CSV出力処理を実行します。")
+            append_csv(csv_path, rows)
 
         if reached_past:
             logger.info(
@@ -559,7 +543,7 @@ def collect_purchase_items(
             # 再トライ
             continue
 
-    return load_results_from_temp(temp_csv_path)
+    return no
 
 
 def enrich_items_with_detail(
@@ -612,46 +596,6 @@ def enrich_items_with_detail(
 
         # アクセス間隔
         sleep(INTERVAL_SEC)
-
-
-def write_csv(csv_path: str, items: List[Dict[str, str]]) -> None:
-    """
-    関数名: write_csv
-    CSVファイルを出力する
-
-    引数:
-        csv_path (str): 出力先パス
-        items (List[Dict[str, str]]): 出力データ（辞書のリスト）
-
-    戻り値:
-        None
-    """
-    with open(csv_path, "w", newline="", encoding="utf-8-sig") as file:
-        writer = csv.writer(
-            file,
-            quoting=csv.QUOTE_MINIMAL,
-        )
-
-        writer.writerow(
-            [
-                "No.",
-                "商品名",
-                "金額",
-                "購入日時",
-                "商品ID／注文番号",
-            ]
-        )
-
-        for index, item in enumerate(items, start=1):
-            writer.writerow(
-                [
-                    index,
-                    item["item_name"],
-                    item.get("price", ""),
-                    item["purchase_datetime"],
-                    item.get("item_or_order_id", ""),
-                ]
-            )
 
 
 def fetch_purchase_detail(
@@ -818,19 +762,14 @@ def execute_once(
     error_count = 0
 
     logger.info(f"購入履歴ページ解析処理を実行します。")
-    items = collect_purchase_items(
+    no = collect_purchase_items(
         driver,
         tabs,
         from_date,
         to_date,
+        csv_path,
     )
     
-    logger.info(f"取引明細ページ解析処理を実行します。")
-    enrich_items_with_detail(driver, tabs, items)
-    
-    logger.info(f"CSV出力処理を実行します。")
-    write_csv(csv_path, items)
-
     if error_count > 0:
         error_count_info = f"{error_count} 件  ★★★  ログファイルとスナップショットファイルをご確認ください  ★★★"
     else:
@@ -841,7 +780,7 @@ def execute_once(
         f"　検索条件 From : {from_date.strftime("%Y/%m/%d")}\n"
         f"　検索条件 To   : {to_date.strftime("%Y/%m/%d")}\n"
         f"　CSV出力先     : {csv_path}\n"
-        f"　出力件数      : {len(items)} 件\n"
+        f"　出力件数      : {no} 件\n"
         f"　エラー件数    : {error_count_info}"
     )
 
