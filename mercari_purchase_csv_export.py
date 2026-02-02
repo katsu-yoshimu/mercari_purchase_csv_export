@@ -223,9 +223,10 @@ class TabController:
 
     def __init__(self, driver: webdriver.Chrome) -> None:
         """
+        関数名: __init__
         TabController を初期化する。
 
-        Args:
+        引数:
             driver (webdriver.Chrome): Selenium WebDriver
         """
         self.driver = driver
@@ -234,22 +235,30 @@ class TabController:
 
     def _is_tab_alive(self, handle: Optional[str]) -> bool:
         """
+        関数名: _is_tab_alive
         指定したタブハンドルが現在も存在するか確認する。
 
-        Args:
+        引数:
             handle (Optional[str]): ウィンドウハンドル
 
-        Returns:
+        戻り値:
             bool: 存在していれば True
         """
         return handle is not None and handle in self.driver.window_handles
 
     def _wait_document_ready(self, timeout: int = 5) -> None:
         """
+        関数名: _wait_document_ready
         document.readyState == 'complete' になるまで待機する。
 
         - about:blank の場合は即時通過
         - DOM 未初期化による事故を防ぐための最小待機
+
+        引数:
+            なし
+
+        戻り値:
+            None
         """
         WebDriverWait(self.driver, timeout).until(
             lambda d: d.execute_script(
