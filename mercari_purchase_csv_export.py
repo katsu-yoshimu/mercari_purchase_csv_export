@@ -6,7 +6,7 @@ import sys
 from datetime import datetime, timedelta, date, timezone
 from pathlib import Path
 from time import sleep
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -21,7 +21,6 @@ from urllib3.exceptions import ReadTimeoutError
 # =====================
 # グローバル設定
 # =====================
-logger = None
 error_count = 0
 DEBUG = False
 IGNORE_TIMEOUT = True
@@ -34,6 +33,13 @@ USER_AGENT = (
 INTERVAL_SEC = 3.0
 
 # =====================
+# ログ
+# =====================
+APP_NAME = "mercari"
+APP_LOG_LEVEL =logging.DEBUG
+logger = logging.getLogger(APP_NAME)
+
+# =====================
 # Retry / Wait 設定（チューニング用）
 # =====================
 
@@ -44,14 +50,15 @@ LIST_WAIT_SEC = 10
 DETAIL_WAIT_SEC = 10
 
 # リトライ制御
-RETRY_MAX_COUNT = 5          # 最大リトライ回数
-RETRY_BASE_INTERVAL = 3.0    # 初期待機秒
-RETRY_INTERVAL_MULTIPLIER = 2.0  # 倍率（例: 1.2 / 1.5 / 2.0）
+RETRY_MAX_COUNT = 5               # 最大リトライ回数
+RETRY_BASE_INTERVAL = 3.0         # 初回待機秒
+RETRY_INTERVAL_MULTIPLIER = 2.0   # 倍率（例: 1.2 / 1.5 / 2.0）
 
 # =====================
 # 「もっと見る」対応
 # =====================
-MORE_CLICK_SLEEP_SEC = 3          # 「もっと見る」クリック後の待機秒
+MORE_CLICK_SLEEP_SEC = 3.0        # 「もっと見る」クリック後の初回待機秒
+MORE_CLICK_SLEEP_MULTIPLIER = 2.0 # 倍率（例: 1.2 / 1.5 / 2.0）
 MORE_CLICK_CONFIRM_INTERVAL = 5   # 何回ごとに継続確認するか
 MAX_NO_GROW_COUNT = 3             # 行数が増えない状態の許容回数
 
@@ -108,16 +115,16 @@ def parse_args() -> argparse.Namespace:
 # =====================
 # Logger
 # =====================
-def setup_logger() -> logging.Logger:
+def setup_logger() -> None:
     """
-    関数名: parse_args
-    コマンドライン引数を解析する。
+    関数名: setup_logger
+    ルートロガーを初期化し、標準出力およびログファイルへ出力する。
 
     引数:
         なし
 
     戻り値:
-        argparse.Namespace: パース済み引数
+        None
     """
     jst = timezone(timedelta(hours=9))
     today = datetime.now(jst).strftime("%Y%m%d")
@@ -127,26 +134,26 @@ def setup_logger() -> logging.Logger:
 
     log_file = log_dir / f"mercari_purchase_csv_export_{today}.log"
 
-    logger_obj = logging.getLogger("mercari")
-    logger_obj.setLevel(logging.DEBUG)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
 
     formatter = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(message)s"
+        "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
     )
 
+    # --- 重複handler防止 ---
+    if root_logger.handlers:
+        return
+
+    # --- Console ---
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
+    root_logger.addHandler(stream_handler)
 
-    file_handler = logging.FileHandler(
-        log_file, encoding="utf-8"
-    )
+    # --- File ---
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setFormatter(formatter)
-
-    if not logger_obj.handlers:
-        logger_obj.addHandler(stream_handler)
-        logger_obj.addHandler(file_handler)
-
-    return logger_obj
+    root_logger.addHandler(file_handler)
 
 
 # =====================
@@ -252,6 +259,7 @@ class TabController:
 
     def use_list_page(self) -> None:
         """
+        関数名: use_list_page
         一覧ページタブを利用する。
 
         - 未登録、または手動で閉じられていた場合:
@@ -260,6 +268,12 @@ class TabController:
             - 一覧ページタブへ切り替え
 
         切替後は document.readyState を待機する。
+
+        引数:
+            なし
+
+        戻り値:
+            None
         """
         if not self._is_tab_alive(self._list_tab):
             self._list_tab = self.driver.current_window_handle
@@ -271,6 +285,7 @@ class TabController:
 
     def use_detail_page(self) -> None:
         """
+        関数名: use_detail_page
         詳細ページタブを利用する。
 
         - 未登録、または手動で閉じられていた場合:
@@ -279,6 +294,12 @@ class TabController:
             - 詳細ページタブへ切り替え
 
         切替後は document.readyState を待機する。
+
+        引数:
+            なし
+
+        戻り値:
+            None
         """
         if not self._is_tab_alive(self._detail_tab):
             self.driver.execute_script("window.open();")
@@ -321,8 +342,8 @@ def save_debug_snapshot(driver: webdriver.Chrome, prefix: str) -> None:
         driver.save_screenshot(str(png_path))
         html_path.write_text(driver.page_source, encoding="utf-8")
 
-        logger.debug("スナップショット保存(PNG): %s", png_path)
-        logger.debug("スナップショット保存(HTML): %s", html_path)
+        logger.info("スナップショット保存(PNG): %s", png_path)
+        logger.info("スナップショット保存(HTML): %s", html_path)
         error_count += 1
 
     except Exception:
@@ -404,11 +425,21 @@ def get_text_or_empty(
         return ""
 
 
-# ★ToDo★追加関数に関数ヘッダ追加
 def append_csv(
     path: Path,
     rows: List[Dict[str, str]],
 ) -> None:
+    """
+    関数名: append_csv
+    CSVファイルに購入履歴データを追記する。
+
+    引数:
+        path (Path): 出力先CSVパス
+        rows (List[Dict[str, str]]): 追記する購入履歴データ
+
+    戻り値:
+        None
+    """
     is_new = not path.exists()
 
     with open(path, "a", newline="", encoding="utf-8-sig") as f:
@@ -441,24 +472,35 @@ def append_csv(
 # =====================
 # Main logic
 # =====================
-# ★ToDo★追加関数に関数ヘッダ追加
 def extract_new_rows(
     items,
     start_index: int,
     from_date: date,
     to_date: date,
     datetime_format: str,
-    no: int,
-) -> tuple[list[dict], bool]:
+    already_output_count: int,
+) -> tuple[List[Dict[str,str]], bool, int]:
     """
+    関数名: extract_new_rows
+    購入履歴情報リストの追加分からCSV追記用データを抽出する
+
+    引数:
+        items (List[Dict[str, str]]): 購入履歴情報リスト（全件）
+        start_index (int): 処理開始リスト番号
+        from_date (date): 抽出開始日
+        to_date (date): 抽出終了日
+        datetime_format (str): 日付フォーマット
+        already_output_count (int): 出力件数（出力済）
+
     戻り値:
-      rows: CSV追記用データ
-      reached_past: Fromより過去に到達したか
+        rows (List[Dict[str, str]]): CSV追記用データ
+        reached_past (bool): Fromより過去に到達したか
+        total_write_count (int): 出力件数（総件数）
     """
     rows = []
-    append_count = no
+    total_output_count = already_output_count
 
-    for index, item in enumerate(items[start_index:]):
+    for item in items[start_index:]:
         detail_url = item.find_element(By.XPATH, "./a").get_attribute("href")
         item_name = item.find_element(
             By.XPATH, ".//p[@data-testid='item-label']"
@@ -473,20 +515,20 @@ def extract_new_rows(
         purchase_date = purchase_dt.date()
 
         if purchase_date < from_date:
-            return rows, True, append_count
+            return rows, True, total_output_count
 
         if from_date <= purchase_date <= to_date:
-            append_count += 1
+            total_output_count += 1
             rows.append(
                 {
-                    "no": append_count,
+                    "no": total_output_count,
                     "detail_url": detail_url,
                     "item_name": item_name,
                     "purchase_datetime": purchase_dt.strftime(datetime_format),
                 }
             )
 
-    return rows, False, append_count
+    return rows, False, total_output_count
 
 
 def collect_purchase_items(
@@ -495,19 +537,20 @@ def collect_purchase_items(
     from_date: date,
     to_date: date,
     csv_path: str,
-) -> List[Dict[str, str]]:
+) -> int:
     """
     関数名: collect_purchase_items
-    購入履歴から対象明細を抽出する
+    購入履歴から対象明細を抽出しCSV出力する
 
     引数:
         driver (webdriver.Chrome): WebDriverインスタンス
         tabs (TabController): タブ管理クラス
         from_date (date): 抽出開始日
         to_date (date): 抽出終了日
+        csv_path (Path): 出力先CSVパス
 
     戻り値:
-        List[Dict[str, str]]: 商品名、購入日時、詳細ページURLを含む辞書のリスト
+        int: 出力件数
     """
     DATETIME_FORMAT = "%Y/%m/%d %H:%M"
     
@@ -516,31 +559,28 @@ def collect_purchase_items(
         logger.info("CSVファイルを削除します: %s", csv_path)
         csv_path.unlink()
 
-    # --- 商品代金 要素の表示待ち ---
-    try:
-        tabs.use_list_page()
-        WebDriverWait(driver, LIST_WAIT_SEC).until(
-            EC.visibility_of_element_located(
-                (By.XPATH, "//ul[@data-testid='purchase-item-list']/li")
+    # --- 購入履歴の一覧表 要素の表示待ち ---
+    while True:
+        try:
+            tabs.use_list_page()
+            WebDriverWait(driver, LIST_WAIT_SEC).until(
+                EC.visibility_of_element_located(
+                    (By.XPATH, "//ul[@data-testid='purchase-item-list']/li")
+                )
             )
-        )
-        logger.debug("購入履歴の一覧表の表示を確認しました。")
-    except TimeoutException:
-        save_debug_snapshot(driver, "timeout_purchase_list_")
-        logger.warning(
-            "購入履歴の一覧表の表示待ちがタイムアウトしました。"
-            "ページを再表示してください。"
-        )
-        input(
-            "【確認】購入履歴ページを再表示したら Enterキーを押してください。"
-        )
-        # 再トライ
-        return collect_purchase_items(driver, from_date, to_date)
-
+            logger.info("購入履歴の一覧表の表示を確認しました。")
+            break
+        except TimeoutException:
+            save_debug_snapshot(driver, "timeout_purchase_list")
+            logger.warning("購入履歴の一覧表の表示待ちでタイムアウトしました。")
+            input(
+                "【確認】購入履歴ページを再表示したのちに Enterキーを押してください。\n"
+            )
+        
     processed_count = 0  # 前回処理済みの一覧行数
     no_grow_count = 0    # 行数が増えなかった連続回数
     more_click_count = 0 # 「もっと見る」クリック回数
-    no = 0
+    output_count = 0     # CSVファイルのNo.
 
     while True:
         tabs.use_list_page()
@@ -564,19 +604,18 @@ def collect_purchase_items(
         )
 
         # 追加行を抽出
-        rows, reached_past, no = extract_new_rows(
+        rows, reached_past, output_count = extract_new_rows(
             items,
             processed_count,
             from_date,
             to_date,
             DATETIME_FORMAT,
-            no,
+            output_count,
         )
-        # logger.debug(f"items:[{len(items)}]件 processed_count:[{processed_count}]")
 
         # 追加行を一時ファイル出力
         if rows:
-            logger.info(f"取引明細ページ解析処理を実行します。")
+            logger.info(f"購入履歴ページ解析処理を実行します。")
             enrich_items_with_detail(driver, tabs, rows)
 
             logger.info(f"CSV出力処理を実行します。")
@@ -624,19 +663,21 @@ def collect_purchase_items(
                 By.XPATH,
                 '//button//span[contains(text(),"もっと見る")]'
             )
+            wait_sec = MORE_CLICK_SLEEP_SEC * (MORE_CLICK_SLEEP_MULTIPLIER ** (no_grow_count))
+            logger.info(f"[もっと見る]をクリックし {wait_sec} 秒後に一覧表の確認をします。")
             more_btn.click()
-            sleep(MORE_CLICK_SLEEP_SEC)
+            sleep(wait_sec)
 
         except WebDriverException:
             # クリックできないとき、再度ページを確認
             logger.exception("「もっと見る」ボタンが見つかりません。")
             input(
-                "【確認】購入履歴ページを再表示したら Enterキーを押してください。"
+                "【確認】購入履歴ページを再表示したのちに Enterキーを押してください。\n"
             )
             # 再トライ
             continue
 
-    return no
+    return output_count
 
 
 def enrich_items_with_detail(
@@ -855,7 +896,7 @@ def execute_once(
     error_count = 0
 
     logger.info(f"購入履歴ページ解析処理を実行します。")
-    no = collect_purchase_items(
+    no_write_count = collect_purchase_items(
         driver,
         tabs,
         from_date,
@@ -870,10 +911,10 @@ def execute_once(
         
     logger.info(
         f"メルカリ購入履歴CSV出力処理が完了しました。\n"
-        f"　検索条件 From : {from_date.strftime("%Y/%m/%d")}\n"
-        f"　検索条件 To   : {to_date.strftime("%Y/%m/%d")}\n"
+        f"　検索条件 From : {from_date.strftime('%Y/%m/%d')}\n"
+        f"　検索条件 To   : {to_date.strftime('%Y/%m/%d')}\n"
         f"　CSV出力先     : {csv_path}\n"
-        f"　出力件数      : {no} 件\n"
+        f"　出力件数      : {no_write_count} 件\n"
         f"　エラー件数    : {error_count_info}"
     )
 
@@ -921,7 +962,11 @@ def prompt_reexecute_params(
             if not s:
                 break
             try:
-                to_date = datetime.strptime(s, "%Y/%m/%d").date()
+                new_to_date = datetime.strptime(s, "%Y/%m/%d").date()
+                if new_to_date < from_date:
+                    print(f"To は From [{from_date.strftime('%Y/%m/%d')}] 以降で入力してください。")
+                    continue
+                to_date = new_to_date
                 break
             except ValueError:
                 print("日付形式が不正です。yyyy/mm/dd で入力してください。")
@@ -935,8 +980,8 @@ def prompt_reexecute_params(
         )
 
         print("\n【確認】入力内容を確認してください。\n"
-            f"　検索条件 From : {from_date.strftime("%Y/%m/%d")}\n"
-            f"　検索条件 To   : {to_date.strftime("%Y/%m/%d")}\n"
+            f"　検索条件 From : {from_date.strftime('%Y/%m/%d')}\n"
+            f"　検索条件 To   : {to_date.strftime('%Y/%m/%d')}\n"
             f"　CSV出力先     : {new_csv}"
         )
 
@@ -967,13 +1012,14 @@ def main() -> None:
     戻り値:
         None
     """
-    global DEBUG, IGNORE_TIMEOUT, logger
+    global DEBUG, IGNORE_TIMEOUT
 
     # --- スクリプトのあるディレクトリに移動 ---
     script_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(script_dir)
 
-    logger = setup_logger()
+    setup_logger()
+    logging.getLogger(APP_NAME).setLevel(APP_LOG_LEVEL)
     args = parse_args()
 
     # --- DEBUG、IGNORE_TIMEOUT フラグ反映 ---
@@ -1019,8 +1065,8 @@ def main() -> None:
             # 実行条件表示
             logger.info(
                 f"メルカリ購入履歴CSV出力処理を実行します。\n"
-                f"　検索条件 From : {from_date.strftime("%Y/%m/%d")}\n"
-                f"　検索条件 To   : {to_date.strftime("%Y/%m/%d")}\n"
+                f"　検索条件 From : {from_date.strftime('%Y/%m/%d')}\n"
+                f"　検索条件 To   : {to_date.strftime('%Y/%m/%d')}\n"
                 f"　CSV出力先     : {csv_path}"
             )
             try:
