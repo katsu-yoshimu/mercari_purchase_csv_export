@@ -57,10 +57,10 @@ RETRY_INTERVAL_MULTIPLIER = 2.0   # 倍率（例: 1.2 / 1.5 / 2.0）
 # =====================
 # 「もっと見る」対応
 # =====================
-MORE_CLICK_SLEEP_SEC = 3.0        # 「もっと見る」クリック後の初回待機秒
-MORE_CLICK_SLEEP_MULTIPLIER = 2.0 # 倍率（例: 1.2 / 1.5 / 2.0）
-MORE_CLICK_CONFIRM_INTERVAL = 5   # 何回ごとに継続確認するか
-MAX_NO_GROW_COUNT = 3             # 行数が増えない状態の許容回数
+MORE_CLICK_SLEEP_SEC = 3.0         # 「もっと見る」クリック後の初回待機秒
+MORE_CLICK_SLEEP_MULTIPLIER = 2.0  # 倍率（例: 1.2 / 1.5 / 2.0）
+MORE_CLICK_CONFIRM_INTERVAL = 1000 # 何回ごとに継続確認するか
+MAX_NO_GROW_COUNT = 5              # 行数が増えない状態の許容回数
 
 # =====================
 # 引数
@@ -652,6 +652,8 @@ def collect_purchase_items(
 
         processed_count = len(items)
         more_click_count += 1
+        wait_sec = MORE_CLICK_SLEEP_SEC * (MORE_CLICK_SLEEP_MULTIPLIER ** (no_grow_count))
+        logger.info(f"[もっと見る]クリック {more_click_count} 回目、{wait_sec} 秒後に一覧ページを確認します。")
 
         # 5回ごとに継続確認
         if more_click_count % MORE_CLICK_CONFIRM_INTERVAL == 0:
@@ -672,8 +674,6 @@ def collect_purchase_items(
                 By.XPATH,
                 '//button//span[contains(text(),"もっと見る")]'
             )
-            wait_sec = MORE_CLICK_SLEEP_SEC * (MORE_CLICK_SLEEP_MULTIPLIER ** (no_grow_count))
-            logger.info(f"[もっと見る]をクリックし {wait_sec} 秒後に一覧表の確認をします。")
             more_btn.click()
             sleep(wait_sec)
 
