@@ -75,15 +75,13 @@ mercari_purchase_csv_export/
 ├─ mercari_purchase_csv_export.py                    # メルカリ購入履歴をCSV出力するスクリプト
 ├─ README.md                                         # 本ツールの説明・使い方
 ├─ logs/                                             # ログおよびデバッグ用スナップショット出力先
-│  ├─ mercari_purchase_csv_export_YYYYMMDD.log         # 実行ログ（日付ごとに作成）
-│  ├─ timeout_purchase_list_YYYYMMDD_HHMMSS.png        # 購入履歴ページ表示タイムアウト時スクリーンショット
-│  ├─ timeout_purchase_list_YYYYMMDD_HHMMSS.html       # 購入履歴ページ表示タイムアウト時HTML
-│  ├─ timeout_detail_price_YYYYMMDD_HHMMSS.png         # 詳細ページ表示（金額）タイムアウト時スクリーンショット
-│  ├─ timeout_detail_price_YYYYMMDD_HHMMSS.html        # 詳細ページ表示（金額）タイムアウト時HTML
-│  ├─ timeout_detail_id_or_order_YYYYMMDD_HHMMSS.png   # 詳細ページ表示（商品ID／注文番号）タイムアウト時スクリーンショット
-│  └─ timeout_detail_id_or_order_YYYYMMDD_HHMMSS.html  # 詳細ページ表示（商品ID／注文番号）タイムアウト時HTML
+│  ├─ mercari_purchase_csv_export_YYYYMMDD.log       # 実行ログ（日付ごとに作成）
+│  ├─ timeout_purchase_list_YYYYMMDD_HHMMSS.png      # 購入履歴ページ表示タイムアウト時スクリーンショット
+│  ├─ timeout_purchase_list_YYYYMMDD_HHMMSS.html     # 購入履歴ページ表示タイムアウト時HTML
+│  ├─ retryout_detail_rN_YYYYMMDD_HHMMSS.png         # 詳細ページ表示（商品ID／注文番号）タイムアウト時スクリーンショット
+│  └─ retryout_detail_rN_YYYYMMDD_HHMMSS.html        # 詳細ページ表示（商品ID／注文番号）タイムアウト時HTML
 ├─ output/                                           # CSV出力先（任意・引数指定可）
-│  └─ 購入履歴_YYYYMMDD_YYYYMMDD.csv                    # 購入履歴CSV（from-date_to-date）
+│  └─ 購入履歴_YYYYMMDD_YYYYMMDD.csv                  # 購入履歴CSV（from-date_to-date）
 └─ requirements.txt                                  # 依存ライブラリ（selenium など）
 ```
 
@@ -98,9 +96,10 @@ mercari_purchase_csv_export/
 5. Enter キーで処理再開
 6. 購入履歴を解析
 7. 日付範囲に該当する明細のみ抽出
-8. 明細ごとに取引詳細ページを表示＆解析 ※時間かかる処理。明細ごとに3秒の待ち時間あり
+8. 明細ごとに取引詳細ページを表示＆解析 ※時間かかる処理。明細ごとに3秒の待ち時間あり、リトライ処理あり
 9. CSV ファイルを作成
-10. 処理結果をコンソールに表示
+10. 購入履歴の最終行の購入日時がFromより過去でないとき「もっと見る」クリックし6.へ ※クリック後に3秒の待ち時間あり
+11. 処理結果をコンソールに表示
 
 ---
 
@@ -115,6 +114,7 @@ mercari_purchase_csv_export/
 | 金額        | 取引詳細ページから取得       |
 | 購入日時      | `yyyy/mm/dd HH:MM` |
 | 商品ID／注文番号 | 取引詳細ページから取得  |
+| 詳細ページ | 取引詳細ページのリンク先から取得  |
 
 ※ 明細が 0 件の場合でも **ヘッダのみの CSV** を作成します。
 
@@ -193,12 +193,6 @@ From 日付 <= 購入日時 <= To 日付
 * 本ツールは **個人利用を想定**
 * メルカリの利用規約を遵守してください
 * 頻繁なアクセスはアカウント制限の原因になる可能性があります
-
----
-
-## 今後の拡張予定
-
-* 「もっと見る」クリック対応（最終行が対象外になるまでクリックを繰り返して購入履歴件数を過去にさかのぼる）
 
 ---
 
