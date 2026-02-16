@@ -33,6 +33,14 @@ USER_AGENT = (
 INTERVAL_SEC = 3.0
 
 # =====================
+# Seleium
+# =====================
+driver = None
+tabs = None
+PROFILE_DIR = Path.home() / "AppData" / "Local" / "selenium_chrome"
+PURCHASES_URL = "https://jp.mercari.com/mypage/purchases"
+
+# =====================
 # ログ
 # =====================
 APP_NAME = "mercari"
@@ -173,6 +181,7 @@ def setup_driver() -> webdriver.Chrome:
     options = Options()
     options.add_argument(f"--user-agent={USER_AGENT}")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument(f"--user-data-dir={PROFILE_DIR}")
 
     service = Service()
     return webdriver.Chrome(service=service, options=options)
@@ -506,19 +515,50 @@ def extract_new_rows(
         reached_past (bool): Fromより過去に到達したか
         total_write_count (int): 出力件数（総件数）
     """
+    global driver, tabs
     rows = []
     total_output_count = already_output_count
 
-    for item in items[start_index:]:
-        detail_url = item.find_element(By.XPATH, "./a").get_attribute("href")
-        item_name = item.find_element(
-            By.XPATH, ".//p[@data-testid='item-label']"
-        ).text
-        dt_text = item.find_element(
-            By.XPATH,
-            ".//p[@data-testid='item-label']"
-            "/following-sibling::div//span",
-        ).text
+    # --- JSで全行の必要情報を一括取得 (通信はここでの1回のみ) ---
+    js_code = """
+return Array.from(document.querySelectorAll("ul[data-testid='purchase-item-list'] > li")).map(li => {
+    const a = li.querySelector("a");
+    const nameElem = li.querySelector("[data-testid='item-label']");
+    
+    // 対策: 複数の候補から日付テキストを探す
+    let dateText = "";
+    if (nameElem) {
+        // 1. 商品名要素の親から見て、日付らしい形式のテキストを持つ要素を検索
+        const container = li.innerText;
+        const dateMatch = container.match(/\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}/);
+        if (dateMatch) {
+            dateText = dateMatch[0];
+        } else {
+            // 2. 正規表現で見つからない場合、従来のセレクタの周辺をより広く探索
+            const spans = li.querySelectorAll("span");
+            for (let s of spans) {
+                if (s.textContent.includes("/") && s.textContent.includes(":")) {
+                    dateText = s.textContent.trim();
+                    break;
+                }
+            }
+        }
+    }
+
+    return {
+        url: a ? a.href : "",
+        name: nameElem ? nameElem.textContent.trim() : "不明な商品",
+        date: dateText
+    };
+});
+"""
+    all_items_data = driver.execute_script(js_code)
+    
+    for item in all_items_data[start_index:]:
+        detail_url = item["url"]
+        item_name = item["name"]
+        dt_text = item["date"]
+        print(item)
 
         purchase_dt = datetime.strptime(dt_text, datetime_format)
         purchase_date = purchase_dt.date()
@@ -541,8 +581,8 @@ def extract_new_rows(
 
 
 def collect_purchase_items(
-    driver: webdriver.Chrome,
-    tabs: TabController,
+    # driver: webdriver.Chrome,
+    # tabs: TabController,
     from_date: date,
     to_date: date,
     csv_path: str,
@@ -561,6 +601,7 @@ def collect_purchase_items(
     戻り値:
         int: 出力件数
     """
+    global driver, tabs
     DATETIME_FORMAT = "%Y/%m/%d %H:%M"
     
     # --- CSVファイルがあれば削除 ---
@@ -625,7 +666,7 @@ def collect_purchase_items(
         # 追加行を一時ファイル出力
         if rows:
             logger.info(f"購入履歴ページ解析処理を実行します。")
-            enrich_items_with_detail(driver, tabs, rows)
+            enrich_items_with_detail(rows)
 
             logger.info(f"CSV出力処理を実行します。")
             append_csv(csv_path, rows)
@@ -690,8 +731,8 @@ def collect_purchase_items(
 
 
 def enrich_items_with_detail(
-    driver: webdriver.Chrome,
-    tabs: TabController,
+    # driver: webdriver.Chrome,
+    # tabs: TabController,
     items: List[Dict[str, str]],
 ) -> None:
     """
@@ -707,6 +748,7 @@ def enrich_items_with_detail(
     戻り値:
         None
     """
+    global driver, tabs
     total = len(items)
 
     if total == 0:
@@ -719,7 +761,7 @@ def enrich_items_with_detail(
         if DEBUG:
             detail_url = "file:///C:/work/02_%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA%E8%B3%BC%E5%85%A5%E5%B1%A5%E6%AD%B4CSV%E5%87%BA%E5%8A%9B/0116%E5%85%A5%E6%89%8B%E8%B3%87%E6%96%99/%E5%8F%96%E5%BC%95%E7%94%BB%E9%9D%A2%20-%20%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA.mhtml"
 
-        detail = fetch_purchase_detail(driver, tabs, detail_url)
+        detail = fetch_purchase_detail(detail_url)
 
         item["price"] = detail["price"]
 
@@ -742,8 +784,8 @@ def enrich_items_with_detail(
 
 
 def fetch_purchase_detail(
-    driver: webdriver.Chrome,
-    tabs: TabController,
+    # driver: webdriver.Chrome,
+    # tabs: TabController,
     detail_url: str,
 ) -> Dict[str, str]:
     """
@@ -758,6 +800,7 @@ def fetch_purchase_detail(
     戻り値:
         Dict[str, str]: "price", "item_id", "order_number" をキーに持つ辞書
     """
+    global driver, tabs
     last_exception: Exception | None = None
 
     for retry in range(1, RETRY_MAX_COUNT + 1):
@@ -850,6 +893,11 @@ def fetch_purchase_detail(
                     str(e).rstrip(),
                 )
                 last_exception = e
+
+                driver = setup_driver()
+                tabs = TabController(driver)
+                wait_for_manual_login(driver, tabs)
+
             else:
                 # 想定外
                 logger.exception("想定外エラーが発生しました。")
@@ -881,8 +929,8 @@ def fetch_purchase_detail(
 
 
 def execute_once(
-    driver: webdriver.Chrome,
-    tabs: TabController,
+    # driver: webdriver.Chrome,
+    # tabs: TabController,
     from_date: date,
     to_date: date,
     csv_path: Path,
@@ -901,13 +949,14 @@ def execute_once(
     戻り値:
         None
     """
+    global driver, tabs
     global error_count
     error_count = 0
 
     logger.info(f"購入履歴ページ解析処理を実行します。")
     no_write_count = collect_purchase_items(
-        driver,
-        tabs,
+        # driver,
+        # tabs,
         from_date,
         to_date,
         csv_path,
@@ -1022,6 +1071,7 @@ def main() -> None:
         None
     """
     global DEBUG, IGNORE_TIMEOUT
+    global driver, tabs
 
     # --- スクリプトのあるディレクトリに移動 ---
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1079,7 +1129,7 @@ def main() -> None:
                 f"　CSV出力先     : {csv_path}"
             )
             try:
-                execute_once(driver, tabs, from_date, to_date, csv_path)
+                execute_once(from_date, to_date, csv_path)
             except Exception:
                 logger.exception("予期しないエラーが発生しました。")
 
