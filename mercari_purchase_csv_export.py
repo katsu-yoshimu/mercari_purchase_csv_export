@@ -14,7 +14,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.common.exceptions import TimeoutException, WebDriverException, InvalidSessionIdException
 from urllib3.exceptions import ReadTimeoutError
 
 
@@ -24,7 +24,6 @@ from urllib3.exceptions import ReadTimeoutError
 error_count = 0
 DEBUG = False
 IGNORE_TIMEOUT = True
-LOGIN_URL = "https://jp.mercari.com/"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -35,8 +34,8 @@ INTERVAL_SEC = 3.0
 # =====================
 # Seleium
 # =====================
-driver = None
-tabs = None
+driver = None   # WebDriverインスタンス
+tabs = None     # タブ管理クラス
 PROFILE_DIR = Path.home() / "AppData" / "Local" / "selenium_chrome"
 PURCHASES_URL = "https://jp.mercari.com/mypage/purchases"
 
@@ -199,18 +198,44 @@ def wait_for_manual_login(driver: webdriver.Chrome, tabs: TabController) -> None
     戻り値:
         None
     """
-    login_url = LOGIN_URL
+    login_url = PURCHASES_URL
     # テスト用URL
     if DEBUG:
         login_url = "file:///C:/work/02_%E3%83%A1%E3%83%AB%E3%82%AB%E3%83%AA%E8%B3%BC%E5%85%A5%E5%B1%A5%E6%AD%B4CSV%E5%87%BA%E5%8A%9B/0116%E5%85%A5%E6%89%8B%E8%B3%87%E6%96%99/%E8%B3%BC%E5%85%A5%E3%81%97%E3%81%9F%E5%95%86%E5%93%81%20-%20%E3%83%86%E3%82%B9%E3%83%88.mhtml"
 
     tabs.use_list_page()
     driver.get(login_url)
-    input(
-        "【確認】\n"
-        "Chromeでメルカリにログインし、\n"
-        "購入履歴ページを表示したのちに Enterキーを押してください。\n"
-    )
+    wait_purchases_list()
+
+
+def wait_purchases_list():
+    """
+    関数名: wait_purchases_list
+    購入履歴の一覧表 要素の表示待ち
+
+    引数:
+        None
+
+    戻り値:
+        None
+    """
+    # ---  ---
+    while True:
+        try:
+            tabs.use_list_page()
+            WebDriverWait(driver, LIST_WAIT_SEC).until(
+                EC.visibility_of_element_located(
+                    (By.XPATH, "//ul[@data-testid='purchase-item-list']/li")
+                )
+            )
+            logger.info("購入履歴の一覧表の表示を確認しました。")
+            break
+        except TimeoutException:
+            save_debug_snapshot(driver, "timeout_purchase_list")
+            logger.warning("購入履歴の一覧表の表示待ちでタイムアウトしました。")
+            input(
+                "【確認】購入履歴ページを再表示したのちに Enterキーを押してください。\n"
+            )
 
 
 # =====================
@@ -490,99 +515,9 @@ def append_csv(
 # =====================
 # Main logic
 # =====================
-def extract_new_rows(
-    items,
-    start_index: int,
-    from_date: date,
-    to_date: date,
-    datetime_format: str,
-    already_output_count: int,
-) -> tuple[List[Dict[str,str]], bool, int]:
-    """
-    関数名: extract_new_rows
-    購入履歴情報リストの追加分からCSV追記用データを抽出する
-
-    引数:
-        items (List[Dict[str, str]]): 購入履歴情報リスト（全件）
-        start_index (int): 処理開始リスト番号
-        from_date (date): 抽出開始日
-        to_date (date): 抽出終了日
-        datetime_format (str): 日付フォーマット
-        already_output_count (int): 出力件数（出力済）
-
-    戻り値:
-        rows (List[Dict[str, str]]): CSV追記用データ
-        reached_past (bool): Fromより過去に到達したか
-        total_write_count (int): 出力件数（総件数）
-    """
-    global driver, tabs
-    rows = []
-    total_output_count = already_output_count
-
-    # --- JSで全行の必要情報を一括取得 (通信はここでの1回のみ) ---
-    js_code = """
-return Array.from(document.querySelectorAll("ul[data-testid='purchase-item-list'] > li")).map(li => {
-    const a = li.querySelector("a");
-    const nameElem = li.querySelector("[data-testid='item-label']");
-    
-    // 対策: 複数の候補から日付テキストを探す
-    let dateText = "";
-    if (nameElem) {
-        // 1. 商品名要素の親から見て、日付らしい形式のテキストを持つ要素を検索
-        const container = li.innerText;
-        const dateMatch = container.match(/\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}/);
-        if (dateMatch) {
-            dateText = dateMatch[0];
-        } else {
-            // 2. 正規表現で見つからない場合、従来のセレクタの周辺をより広く探索
-            const spans = li.querySelectorAll("span");
-            for (let s of spans) {
-                if (s.textContent.includes("/") && s.textContent.includes(":")) {
-                    dateText = s.textContent.trim();
-                    break;
-                }
-            }
-        }
-    }
-
-    return {
-        url: a ? a.href : "",
-        name: nameElem ? nameElem.textContent.trim() : "不明な商品",
-        date: dateText
-    };
-});
-"""
-    all_items_data = driver.execute_script(js_code)
-    
-    for item in all_items_data[start_index:]:
-        detail_url = item["url"]
-        item_name = item["name"]
-        dt_text = item["date"]
-        print(item)
-
-        purchase_dt = datetime.strptime(dt_text, datetime_format)
-        purchase_date = purchase_dt.date()
-
-        if purchase_date < from_date:
-            return rows, True, total_output_count
-
-        if from_date <= purchase_date <= to_date:
-            total_output_count += 1
-            rows.append(
-                {
-                    "no": total_output_count,
-                    "detail_url": detail_url,
-                    "item_name": item_name,
-                    "purchase_datetime": purchase_dt.strftime(datetime_format),
-                }
-            )
-
-    return rows, False, total_output_count
 
 
 def collect_purchase_items(
-    # driver: webdriver.Chrome,
-    # tabs: TabController,
     from_date: date,
     to_date: date,
     csv_path: str,
@@ -592,8 +527,6 @@ def collect_purchase_items(
     購入履歴から対象明細を抽出しCSV出力する
 
     引数:
-        driver (webdriver.Chrome): WebDriverインスタンス
-        tabs (TabController): タブ管理クラス
         from_date (date): 抽出開始日
         to_date (date): 抽出終了日
         csv_path (Path): 出力先CSVパス
@@ -610,34 +543,35 @@ def collect_purchase_items(
         csv_path.unlink()
 
     # --- 購入履歴の一覧表 要素の表示待ち ---
-    while True:
-        try:
-            tabs.use_list_page()
-            WebDriverWait(driver, LIST_WAIT_SEC).until(
-                EC.visibility_of_element_located(
-                    (By.XPATH, "//ul[@data-testid='purchase-item-list']/li")
-                )
-            )
-            logger.info("購入履歴の一覧表の表示を確認しました。")
-            break
-        except TimeoutException:
-            save_debug_snapshot(driver, "timeout_purchase_list")
-            logger.warning("購入履歴の一覧表の表示待ちでタイムアウトしました。")
-            input(
-                "【確認】購入履歴ページを再表示したのちに Enterキーを押してください。\n"
-            )
+    wait_purchases_list()
+
         
     processed_count = 0  # 前回処理済みの一覧行数
     no_grow_count = 0    # 行数が増えなかった連続回数
     more_click_count = 0 # 「もっと見る」クリック回数
     output_count = 0     # CSVファイルのNo.
+    last_processed_row = None
 
     while True:
-        tabs.use_list_page()
-        items = driver.find_elements(
-            By.XPATH,
-            "//ul[@data-testid='purchase-item-list']/li",
-        )
+        # 一覧リスト取得 ★ToDo★ Timeout系エラーはリトライ
+        try:
+            tabs.use_list_page()
+            items = driver.find_elements(
+                By.XPATH,
+                "//ul[@data-testid='purchase-item-list']/li",
+            )
+        except Exception as e:
+            if isinstance(e, InvalidSessionIdException):
+                logger.info("InvalidSessionIdExceptionを検知したため、ブラウザを再起動します。")
+                driver = setup_driver()
+                tabs = TabController(driver)
+                wait_for_manual_login(driver, tabs)
+
+            else:
+                # 想定外
+                logger.exception("想定外エラーが発生しました。")
+                raise e
+
         # 処理経過表示
         last_date_text = items[-1].find_element(
             By.XPATH,
@@ -655,12 +589,11 @@ def collect_purchase_items(
 
         # 追加行を抽出
         rows, reached_past, output_count = extract_new_rows(
-            items,
-            processed_count,
             from_date,
             to_date,
             DATETIME_FORMAT,
             output_count,
+            last_processed_row,
         )
 
         # 追加行を一時ファイル出力
@@ -670,6 +603,8 @@ def collect_purchase_items(
 
             logger.info(f"CSV出力処理を実行します。")
             append_csv(csv_path, rows)
+
+            last_processed_row = rows[-1]
 
         if reached_past:
             logger.info(
@@ -696,7 +631,7 @@ def collect_purchase_items(
         wait_sec = MORE_CLICK_SLEEP_SEC * (MORE_CLICK_SLEEP_MULTIPLIER ** (no_grow_count))
         logger.info(f"[もっと見る]クリック {more_click_count} 回目、{wait_sec} 秒後に一覧ページを確認します。")
 
-        # 5回ごとに継続確認
+        # {MORE_CLICK_CONFIRM_INTERVAL}回ごとに継続確認
         if more_click_count % MORE_CLICK_CONFIRM_INTERVAL == 0:
             c = input(
                 "[C] 継続 / [E] 中止 → "
@@ -730,9 +665,107 @@ def collect_purchase_items(
     return output_count
 
 
+def extract_new_rows(
+    from_date: date,
+    to_date: date,
+    datetime_format: str,
+    already_output_count: int,
+    last_row_info: Dict[str, str],
+) -> tuple[List[Dict[str,str]], bool, int]:
+    """
+    関数名: extract_new_rows
+    購入履歴情報リストの追加分からCSV追記用データを抽出する
+
+    引数:
+        from_date (date): 抽出開始日
+        to_date (date): 抽出終了日
+        datetime_format (str): 日付フォーマット
+        already_output_count (int): 出力件数（出力済）
+        last_row_info (Dict[str, str]]): 出力済最終行
+
+    戻り値:
+        rows (List[Dict[str, str]]): CSV追記用データ
+        reached_past (bool): Fromより過去に到達したか
+        total_write_count (int): 出力件数（総件数）
+    """
+    global driver, tabs
+    rows = []
+    total_output_count = already_output_count
+    found_last_row = last_row_info is None
+
+    # --- JSで全行の必要情報を一括取得 (通信はここでの1回のみ) ---
+    js_code = """
+return Array.from(document.querySelectorAll("ul[data-testid='purchase-item-list'] > li")).map(li => {
+    const a = li.querySelector("a");
+    const nameElem = li.querySelector("[data-testid='item-label']");
+    
+    // 対策: 複数の候補から日付テキストを探す
+    let dateText = "";
+    if (nameElem) {
+        // 1. 商品名要素の親から見て、日付らしい形式のテキストを持つ要素を検索
+        const container = li.innerText;
+        const dateMatch = container.match(/\\d{4}\\/\\d{2}\\/\\d{2} \\d{2}:\\d{2}/);
+        if (dateMatch) {
+            dateText = dateMatch[0];
+        } else {
+            // 2. 正規表現で見つからない場合、従来のセレクタの周辺をより広く探索
+            const spans = li.querySelectorAll("span");
+            for (let s of spans) {
+                if (s.textContent.includes("/") && s.textContent.includes(":")) {
+                    dateText = s.textContent.trim();
+                    break;
+                }
+            }
+        }
+    }
+
+    return {
+        url: a ? a.href : "",
+        name: nameElem ? nameElem.textContent.trim() : "不明な商品",
+        date: dateText
+    };
+});
+"""
+    all_items_data = driver.execute_script(js_code)
+    
+    for item in all_items_data:
+        detail_url = item["url"]
+        item_name = item["name"]
+        dt_text = item["date"]
+        # print(item)
+        # --- 読み飛ばしロジック ---
+        if not found_last_row:
+            # URL、名称、日時の3点が一致するかチェック
+            if (detail_url == last_row_info.get("detail_url") and 
+                item_name == last_row_info.get("item_name") and 
+                dt_text == last_row_info.get("purchase_datetime")):
+                
+                found_last_row = True
+                continue  # 一致した行は処理済みなのでスキップ
+            else:
+                continue  # 一致するまでスキップ
+
+        purchase_dt = datetime.strptime(dt_text, datetime_format)
+        purchase_date = purchase_dt.date()
+
+        if purchase_date < from_date:
+            return rows, True, total_output_count
+
+        if from_date <= purchase_date <= to_date:
+            total_output_count += 1
+            rows.append(
+                {
+                    "no": total_output_count,
+                    "detail_url": detail_url,
+                    "item_name": item_name,
+                    "purchase_datetime": purchase_dt.strftime(datetime_format),
+                }
+            )
+
+    return rows, False, total_output_count
+
+
 def enrich_items_with_detail(
-    # driver: webdriver.Chrome,
-    # tabs: TabController,
     items: List[Dict[str, str]],
 ) -> None:
     """
@@ -741,8 +774,6 @@ def enrich_items_with_detail(
     金額・商品ID／注文番号を items に追記する（破壊的更新）
 
     引数:
-        driver (webdriver.Chrome): WebDriverインスタンス
-        tabs (TabController): タブ管理クラス
         items (List[Dict[str, str]]): 更新対象の商品情報のリスト
 
     戻り値:
@@ -784,8 +815,6 @@ def enrich_items_with_detail(
 
 
 def fetch_purchase_detail(
-    # driver: webdriver.Chrome,
-    # tabs: TabController,
     detail_url: str,
 ) -> Dict[str, str]:
     """
@@ -793,8 +822,6 @@ def fetch_purchase_detail(
     詳細URLを開き、金額・商品ID・注文番号を取得する
 
     引数:
-        driver (webdriver.Chrome): WebDriverインスタンス
-        tabs (TabController): タブ管理クラス
         detail_url (str): 詳細ページURL
     
     戻り値:
@@ -894,9 +921,11 @@ def fetch_purchase_detail(
                 )
                 last_exception = e
 
-                driver = setup_driver()
-                tabs = TabController(driver)
-                wait_for_manual_login(driver, tabs)
+                if isinstance(e, InvalidSessionIdException):
+                    logger.info("InvalidSessionIdExceptionを検知したため、ブラウザを再起動します。")
+                    driver = setup_driver()
+                    tabs = TabController(driver)
+                    wait_for_manual_login(driver, tabs)
 
             else:
                 # 想定外
@@ -929,8 +958,6 @@ def fetch_purchase_detail(
 
 
 def execute_once(
-    # driver: webdriver.Chrome,
-    # tabs: TabController,
     from_date: date,
     to_date: date,
     csv_path: Path,
@@ -940,8 +967,6 @@ def execute_once(
     一連の解析・出力処理を1回実行する
 
     引数:
-        driver (webdriver.Chrome): WebDriverインスタンス
-        tabs (TabController): タブ管理クラス
         from_date (date): 検索条件 From
         to_date (date): 検索条件 To
         csv_path (Path): 出力先CSVパス
