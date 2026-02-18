@@ -922,20 +922,20 @@ def fetch_purchase_detail(
         except Exception as e:
             if isinstance(e, (TimeoutException, WebDriverException, ReadTimeoutError)):
                 # 想定内エラー
-                logger.warning(
-                    "詳細取得リトライ %d/%d 失敗: %s: %s",
-                    retry,
-                    RETRY_MAX_COUNT,
-                    type(e).__name__,
-                    str(e).rstrip(),
-                )
-                last_exception = e
-
                 if isinstance(e, InvalidSessionIdException):
                     logger.info("InvalidSessionIdExceptionを検知したため、ブラウザを再起動します。")
                     driver = setup_driver()
                     tabs = TabController(driver)
                     wait_for_manual_login(driver, tabs)
+                else:
+                    logger.warning(
+                        "詳細取得リトライ %d/%d 失敗: %s: %s",
+                        retry,
+                        RETRY_MAX_COUNT,
+                        type(e).__name__,
+                        str(e).rstrip(),
+                    )
+                last_exception = e
 
             else:
                 # 想定外
@@ -946,7 +946,7 @@ def fetch_purchase_detail(
         # --- リトライ待機 ---
         if retry < RETRY_MAX_COUNT:
             wait_sec = RETRY_BASE_INTERVAL * (RETRY_INTERVAL_MULTIPLIER ** (retry - 1))
-            logger.info(f"{wait_sec} 秒後にリトライします。")
+            logger.info(f"詳細取得を {wait_sec} 秒後にリトライします。")
             sleep(wait_sec)
 
     # --- リトライアウト ---
