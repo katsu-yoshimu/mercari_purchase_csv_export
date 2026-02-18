@@ -14,7 +14,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, WebDriverException, InvalidSessionIdException
+from selenium.common.exceptions import TimeoutException, WebDriverException, InvalidSessionIdException, SessionNotCreatedException
 from urllib3.exceptions import ReadTimeoutError
 
 
@@ -182,8 +182,14 @@ def setup_driver() -> webdriver.Chrome:
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument(f"--user-data-dir={PROFILE_DIR}")
 
-    service = Service()
-    return webdriver.Chrome(service=service, options=options)
+    try:
+        service = Service()
+        driver = webdriver.Chrome(service=service, options=options)
+    except SessionNotCreatedException as e:
+        driver = None
+        raise Exception(f"このツールから起動したChromeブラウザは重複起動できません")
+
+    return driver
 
 
 def wait_for_manual_login(driver: webdriver.Chrome, tabs: TabController) -> None:
@@ -515,8 +521,6 @@ def append_csv(
 # =====================
 # Main logic
 # =====================
-
-
 def collect_purchase_items(
     from_date: date,
     to_date: date,
@@ -544,7 +548,6 @@ def collect_purchase_items(
 
     # --- 購入履歴の一覧表 要素の表示待ち ---
     wait_purchases_list()
-
         
     processed_count = 0  # 前回処理済みの一覧行数
     no_grow_count = 0    # 行数が増えなかった連続回数
@@ -553,7 +556,7 @@ def collect_purchase_items(
     last_processed_row = None
 
     while True:
-        # 一覧リスト取得 ★ToDo★ Timeout系エラーはリトライ
+        # 一覧リスト取得
         try:
             tabs.use_list_page()
             items = driver.find_elements(
@@ -598,7 +601,7 @@ def collect_purchase_items(
 
         # 追加行を一時ファイル出力
         if rows:
-            logger.info(f"購入履歴ページ解析処理を実行します。")
+            logger.info(f"購入履歴詳細ページ解析処理を実行します。")
             enrich_items_with_detail(rows)
 
             logger.info(f"CSV出力処理を実行します。")
@@ -622,7 +625,7 @@ def collect_purchase_items(
         if no_grow_count >= MAX_NO_GROW_COUNT:
             logger.info(
                 f"行数増加なし連続回数が許容回数（{MAX_NO_GROW_COUNT}回）を超過したため、"
-                "一覧ページからデータ抽出処理を終了します。"
+                "一覧ページのデータ抽出処理を終了します。"
             )
             break
 
@@ -653,7 +656,14 @@ def collect_purchase_items(
             more_btn.click()
             sleep(wait_sec)
 
-        except WebDriverException:
+        except WebDriverException as e:
+            if isinstance(e, InvalidSessionIdException):
+                logger.info("InvalidSessionIdExceptionを検知したため、ブラウザを再起動します。")
+                driver = setup_driver()
+                tabs = TabController(driver)
+                wait_for_manual_login(driver, tabs)
+                continue
+
             # クリックできないとき、再度ページを確認
             logger.exception("「もっと見る」ボタンが見つかりません。")
             input(
