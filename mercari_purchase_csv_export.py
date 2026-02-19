@@ -187,7 +187,8 @@ def setup_driver() -> webdriver.Chrome:
         driver = webdriver.Chrome(service=service, options=options)
     except SessionNotCreatedException as e:
         driver = None
-        raise Exception(f"このツールから起動したChromeブラウザは重複起動できません")
+        raise Exception("このツールから起動したChromeブラウザは重複起動できません。\n"
+                        "ツールから起動されたChromeブラウザを閉じて再実行してください。")
 
     return driver
 
