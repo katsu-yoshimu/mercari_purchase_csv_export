@@ -573,6 +573,7 @@ def collect_purchase_items(
 
             else:
                 # 想定外
+                save_debug_snapshot(driver, "error_purchase_list")
                 logger.exception("想定外エラーが発生しました。")
                 raise e
 
@@ -624,6 +625,7 @@ def collect_purchase_items(
             no_grow_count = 0
 
         if no_grow_count >= MAX_NO_GROW_COUNT:
+            save_debug_snapshot(driver, "nogrow_purchase_list")
             logger.info(
                 f"行数増加なし連続回数が許容回数（{MAX_NO_GROW_COUNT}回）を超過したため、"
                 "一覧ページのデータ抽出処理を終了します。"
@@ -666,6 +668,7 @@ def collect_purchase_items(
                 continue
 
             # クリックできないとき、再度ページを確認
+            save_debug_snapshot(driver, "error_purchase_list")
             logger.exception("「もっと見る」ボタンが見つかりません。")
             input(
                 "【確認】購入履歴ページを再表示したのちに Enterキーを押してください。\n"
