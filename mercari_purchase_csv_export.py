@@ -69,6 +69,9 @@ MORE_CLICK_SLEEP_MULTIPLIER = 2.0  # 倍率（例: 1.2 / 1.5 / 2.0）
 MORE_CLICK_CONFIRM_INTERVAL = 1000 # 何回ごとに継続確認するか
 MAX_NO_GROW_COUNT = 5              # 行数が増えない状態の許容回数
 
+# 一覧ページ用「もっと見る」ボタン表示待ち時間
+MORE_BUTTON_WAIT_SEC = 10
+
 # =====================
 # 引数
 # =====================
@@ -656,7 +659,25 @@ def collect_purchase_items(
                 By.XPATH,
                 '//button//span[contains(text(),"もっと見る")]'
             )
-            more_btn.click()
+            try:
+                # スクロール
+                driver.execute_script(
+                    "arguments[0].scrollIntoView({block:'center'});",
+                    more_btn
+                )
+                # クリック可能になるまで待機
+                WebDriverWait(driver, MORE_BUTTON_WAIT_SEC).until(EC.element_to_be_clickable(
+                    (By.XPATH, '//button//span[contains(text(),"もっと見る")]')
+                ))
+                more_btn.click()
+            except:
+                logger.info(f"JavaScript利用して[もっと見る]を強制的にクリックします。")
+                more_btn = driver.find_element(
+                    By.XPATH,
+                    '//button//span[contains(text(),"もっと見る")]'
+                )
+                driver.execute_script("arguments[0].click();", more_btn)
+
             sleep(wait_sec)
 
         except WebDriverException as e:
